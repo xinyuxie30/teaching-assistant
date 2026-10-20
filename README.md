@@ -4,20 +4,24 @@
 
 **确认评分细则 → 导入文本答案 → 分点评估与证据 → 老师复核 → 固定快照导出。**
 
-Python + FastAPI + PostgreSQL + 自研 asyncio Worker。当前只有 `fake-v1` 模拟评估器，固定选择每点最低等级、截取原文前缀作为引用候选，**不做语义评分**。所有结果都需老师复核。尚未接入 Jev、生成式模型或教师网页工作台。
+Python + FastAPI + PostgreSQL + 自研 asyncio Worker。已补课程到复核项的列表接口、可选的真实 Jev 适配器与小样本对照命令。默认 `fake-v1` 仍是模拟评估器，不做语义评分；Jev 需显式配置和选择，证据由老师补充。所有结果都需老师复核。普通生成式模型与教师网页工作台尚未实现。
+
+**2026-10-20 更新：本轮按要求只写代码，未运行测试、迁移或真实模型调用。** 使用新版 API/Worker 前先执行 `uv run --frozen alembic upgrade head`；本机数据库尚未应用新增的 `0003`。完整配置、列表参数和对照命令见 [列表与真实模型使用说明](docs/LISTS_AND_MODEL.md)。
 
 ## 直接查看本机结果
 
-本次开发已在当前工作区建立 `.venv`、锁定依赖和未纳入版本管理的 `.env`，并使用本机 PostgreSQL 17.11（`127.0.0.1:55432`）运行了演示。`teaching` 保存合成演示数据，`teaching_test` 用于隔离测试。
+前一阶段 M0 已在当前工作区建立 `.venv`、锁定依赖和未纳入版本管理的 `.env`，并使用本机 PostgreSQL 17.11（`127.0.0.1:55432`）运行了演示。`teaching` 保存合成演示数据，`teaching_test` 用于隔离测试。以下已保存结果来自该阶段。
 
 - [完整演示导出](.local/demo-result.json)：2 份答案，1 份模拟老师确认、1 份待复核。
 - [实现状态与边界](docs/IMPLEMENTATION_STATUS.md)：已实现能力、实际验证、后续工作。
 - [演示脚本](backend/src/teaching_assistant/demo.py)：完整 API 请求示例。
+- [列表与模型接入](docs/LISTS_AND_MODEL.md)：本轮新增代码、配置与待验证边界。
 
 在项目根目录可以重新运行；同一 `run-id` 复用已有回执和记录：
 
 ```powershell
 $env:UV_CACHE_DIR = Join-Path (Get-Location) '.cache\uv'
+uv run --frozen alembic upgrade head
 uv run --frozen teaching-assistant demo
 ```
 
@@ -39,7 +43,7 @@ uv run --frozen teaching-assistant worker
 
 ## 从空环境启动
 
-要求 Python 3.12–3.14、uv、PostgreSQL 17。当前实际验证环境为 Windows、Python 3.13.5、PostgreSQL 17.11。
+要求 Python 3.12–3.14、uv、PostgreSQL 17。此前 M0 实际验证环境为 Windows、Python 3.13.5、PostgreSQL 17.11。
 
 1. 安装依赖，创建本地配置。
 
@@ -66,7 +70,7 @@ uv run --frozen teaching-assistant bootstrap
 uv run --frozen teaching-assistant demo
 ```
 
-随后按上方命令启动 API 和 Worker。不要使用 `Base.metadata.create_all()` 替代迁移：第二个迁移包含保护固定记录的数据库触发器。
+随后按上方命令启动 API 和 Worker。不要使用 `Base.metadata.create_all()` 替代迁移：迁移包含保护固定记录的数据库触发器，以及旧评估配置的兼容记录。
 
 ### 本机无 Docker 的辅助启动方式
 
@@ -101,12 +105,17 @@ uv run --frozen teaching-assistant demo
 | `POST /v1/grading-items/{id}/retry` | 单项失败重试，显式补充有限额度 |
 | `POST /v1/grading-batches/{id}/exports` | 创建 working / confirmed_only 快照 |
 | `GET /v1/exports/{id}?format=json\|csv` | 读取固定快照或下载 CSV |
+| `GET /v1/evaluation-profiles` | 查看当前可选配置及具体 ID，不调用模型 |
+
+新增 12 个分页列表接口和 4 个版本详情接口，覆盖课程、班级、学生、作业、题目、细则、答案、导入、批次、复核项与导出。完整路径及筛选参数见 [接口说明](docs/LISTS_AND_MODEL.md#2-列表与详情接口)；待复核查询为 `GET /v1/grading-items?status=succeeded&review_status=pending`。
 
 JSON 导出包含细则、原答案、引用及复核历史。CSV 是简化成绩表，保留版本、模拟标识、执行状态和复核状态，分别列出建议分数与确认分数；待确认分数留空。
 
 首个 CSV/Excel **导入**格式仍未选定；当前内部 JSON 导入契约可独立使用。
 
-## 验证
+## 由你执行的验证
+
+本轮没有执行以下命令：
 
 ```powershell
 uv run --frozen ruff check backend
@@ -125,15 +134,19 @@ uv run --frozen pytest -q
 
 每项测试在专用数据库的随机 schema 中应用真实迁移，结束时仅删除该 schema。未配置测试库时，集成测试会明确跳过，不能把这种结果视为完整验收。
 
-本次 **21 项测试全部通过**，包含真实 PostgreSQL 下的去重、全量导入回滚、权限隔离、并发复核、并发 Worker、失效租约、检查点恢复、超时预算、单项重试、不可变记录和导出快照验证。没有进行真实模型质量评测、性能压测或生产部署验收。
+历史 M0 版本曾有 **21 项测试通过**，包含 PostgreSQL 下的去重、导入回滚、权限隔离、并发复核、租约恢复和快照验证。本轮改动尚未重新执行这些测试，也未新增测试覆盖；不能用历史结果推断新增列表、真实适配器及迁移已经验收。没有真实模型质量、性能或生产部署结论。
 
 ## 代码入口
 
 - [domain.py](backend/src/teaching_assistant/domain.py)：细则契约、候选等级、Decimal 计分、引用校验。
 - [service.py](backend/src/teaching_assistant/service.py)：授权范围、业务事务、幂等回执、复核、快照。
 - [worker.py](backend/src/teaching_assistant/worker.py)：租约、执行代次、调用预算、检查点和重试。
-- [evaluators.py](backend/src/teaching_assistant/evaluators.py)：评估与独立证据提取协议，以及模拟实现。
-- [db.py](backend/src/teaching_assistant/db.py)：23 张业务和执行表；迁移见 `backend/migrations`。
+- [evaluators.py](backend/src/teaching_assistant/evaluators.py)：评估与证据接口、模拟实现、人工证据占位。
+- [jev.py](backend/src/teaching_assistant/jev.py)：Jev HTTP 适配与响应校验。
+- [profiles.py](backend/src/teaching_assistant/profiles.py)：模型及提示配置的版本化。
+- [listings.py](backend/src/teaching_assistant/listings.py)：列表查询与游标分页。
+- [comparison.py](backend/src/teaching_assistant/comparison.py)：固定小样本对照与报告。
+- [db.py](backend/src/teaching_assistant/db.py)：24 张业务和执行表的模型；迁移见 `backend/migrations`。
 - [api.py](backend/src/teaching_assistant/api.py)：API、开发鉴权和导出。
 
 较长远的设计与本次实现需要区分阅读：[长期记忆](docs/PROJECT_MEMORY.md)、[架构审查](docs/ARCHITECTURE_REVIEW.md)、[原实施方案](docs/IMPLEMENTATION_PLAN.md)、[参考审查](docs/REFERENCE_AUDIT.md)。EchoMind 仅用于借鉴部分思路，本工程未迁移其客服 Agent 代码。

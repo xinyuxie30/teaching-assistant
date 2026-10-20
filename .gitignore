@@ -1,0 +1,14 @@
+.venv/
+.cache/
+.local/
+.pytest_cache/
+.ruff_cache/
+__pycache__/
+*.pyc
+.env
+.env.*
+!.env.example
+*.egg-info/
+dist/
+evals/private/
+evals/reports/

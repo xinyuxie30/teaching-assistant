@@ -1,0 +1,19 @@
+services:
+  postgres:
+    image: postgres:17
+    environment:
+      POSTGRES_USER: teaching
+      POSTGRES_PASSWORD: local-development-only
+      POSTGRES_DB: teaching
+    ports:
+      - "127.0.0.1:5432:5432"
+    volumes:
+      - teaching_pg:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U teaching -d teaching"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
+volumes:
+  teaching_pg:

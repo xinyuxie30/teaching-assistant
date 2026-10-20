@@ -1,0 +1,41 @@
+name: checks
+
+on:
+  push:
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  backend:
+    runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:17
+        env:
+          POSTGRES_USER: teaching
+          POSTGRES_PASSWORD: test-only-password
+          POSTGRES_DB: teaching_test
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U teaching -d teaching_test"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
+    env:
+      TA_DATABASE_URL: postgresql+asyncpg://teaching:test-only-password@127.0.0.1:5432/teaching_test
+      TA_TEST_DATABASE_URL: postgresql+asyncpg://teaching:test-only-password@127.0.0.1:5432/teaching_test
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.13"
+      - run: python -m pip install uv==0.12.9
+      - run: uv sync --frozen
+      - run: uv run --frozen ruff check backend
+      - run: uv run --frozen ruff format --check backend
+      - run: uv run --frozen alembic upgrade head
+      - run: uv run --frozen alembic check
+      - run: uv run --frozen pytest -q

@@ -31,7 +31,9 @@
 
 ## 评分细则 Agent（2026-10-22）
 
-新增 `GET /v1/agent-profiles`、`POST /v1/question-versions/{id}/rubric-agent-runs`、`GET /v1/agent-runs`、`GET /v1/agent-runs/{id}`、`GET /v1/agent-runs/{id}/events` 与 `POST /v1/agent-runs/{id}/cancel`。需先迁移至 `0005`，运行独立 `teaching-assistant agent-worker`；作业准备页已有对应面板。列表仅返回当前老师最近任务，支持 limit，尚无通用游标；事件按 sequence 增量读取。
+新增 `GET /v1/agent-profiles`、`POST /v1/question-versions/{id}/rubric-agent-runs`、`GET /v1/agent-runs`、`GET /v1/agent-runs/{id}`、`GET /v1/agent-runs/{id}/events` 与 `POST /v1/agent-runs/{id}/cancel`。当前需先迁移至 `0006`，运行独立 `teaching-assistant agent-worker`；作业准备页已有对应面板。列表支持 `question_version_id / status / created_from / created_to / limit / cursor`，游标绑定老师和筛选，返回通用分页结构；事件按 sequence 增量读取。详见 [任务历史与页面恢复](AGENT_HISTORY_2026-10-22.md)。
+
+创建任务时可传同题目版本下的 `source_draft_id` 和显式非空 `instructions`，基于该草稿快照与老师意见生成新版；原稿及已确认版本保持原状。任务返回 `source_draft`（id / revision / content_hash），详情另含 `revision_feedback`，列表省略反馈全文。省略来源字段仍是普通起草，兼容原创建请求的幂等回执。示例、错误与验证见 [Agent 修订](AGENT_REVISION_2026-10-22.md)。
 
 Agent 仅生成未确认草稿，默认模拟器；DeepSeek 需显式选择。保存后等待老师，原有细则确认接口会在同一事务内将对应任务改为完成。详细请求、配置、事务与恢复边界见 [Agent 说明](RUBRIC_AGENT_2026-10-22.md)。
 

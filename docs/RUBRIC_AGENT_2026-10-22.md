@@ -1,5 +1,7 @@
 # 评分细则 Agent：实现与验收
 
+最新增量：老师可对已生成草稿提出修改意见，由 Agent 基于原稿快照生成独立新版；原稿、已确认版本和修改来源均保留。后端 118 项、前端 40 项及浏览器完整流程通过；新增 `0006`，复验时已备份并升级本机业务库，见 [审查与复验](AGENT_REVISION_REVIEW_2026-10-22.md)。此前 [任务历史与页面恢复](AGENT_HISTORY_2026-10-22.md) 已完成，下方独立复验数字属于当时版本。
+
 日期：2026-10-22，Asia/Shanghai。用户要求继续实现 Agent，并重点参考本机 Claude Code 源码。本轮交付后端工具循环，具体任务为：**读取固定题目 → 模型起草细则 → 程序检查并保存草稿 → 等待老师 → 老师显式确认后完成**。
 
 已有分项评分仍由固定 `GradingRuntime` 执行。新 Agent 不评学生、不修改已确认细则、不确认或发布成绩。默认模拟器只验证工程流程；接入 DeepSeek 需要显式选择。
@@ -74,7 +76,7 @@ uv run --frozen uvicorn teaching_assistant.api:create_app --factory --host 127.0
 uv run --frozen teaching-assistant agent-worker
 ```
 
-迁移链到 `0005`，包含此前 `0004` 的指纹字段与回填。业务库已于 2026-10-22 先备份（`.local/backups/teaching-before-0005.dump`）再升级到 `0005`，`alembic check` 无待生成操作。`agent-worker --once` 领取并处理一个可执行任务；`--drain` 处理当前就绪任务后退出，不等待未来重试。原 `worker` 命令仍负责分项批改。
+当前迁移链到 `0006`，为修订任务增加来源外键与完整输入快照。已有业务库启动新代码前需升级；此前 `0005` 的业务库备份与验证保留为历史事实，本轮只验证隔离测试 schema。`agent-worker --once` 领取并处理一个可执行任务；`--drain` 处理当前就绪任务后退出，不等待未来重试。原 `worker` 命令仍负责分项批改。
 
 所有接口使用已有 Bearer 身份；POST 必须提供 `Idempotency-Key`，同 key 同请求复用回执，不同内容返回 409。
 
@@ -82,7 +84,7 @@ uv run --frozen teaching-assistant agent-worker
 | --- | --- |
 | `GET /v1/agent-profiles` | 查看 `fake-rubric-agent-v1` / `deepseek-rubric-agent-v1`、ready、具体 ID 与 manifest |
 | `POST /v1/question-versions/{id}/rubric-agent-runs` | 创建任务，返回 202 与任务 ID |
-| `GET /v1/agent-runs?limit=20` | 当前老师最近任务；上限 100，当前没有游标 |
+| `GET /v1/agent-runs?limit=20` | 当前老师任务分页，支持 question_version_id、status、时间范围及 cursor；上限 100 |
 | `GET /v1/agent-runs/{id}` | 状态、草稿 ID、等待条件、预算、尝试数与固定配置 |
 | `GET /v1/agent-runs/{id}/events?after=0&limit=100` | 按任务内 sequence 增量查询，返回 `next_after / has_more` |
 | `POST /v1/agent-runs/{id}/cancel` | 取消 queued/running；已取消可重复请求，等待复核或其他终态返回 409 |
@@ -102,7 +104,7 @@ uv run --frozen teaching-assistant agent-worker
 
 省略 body 字段即采用模拟器默认值；模拟草稿会明确标注不能视为教学标准。使用真实模型时选择 `deepseek-rubric-agent-v1`，复用现有 `TA_DEEPSEEK_API_KEY / TA_DEEPSEEK_MODEL / TA_DEEPSEEK_EXPECTED_MODEL / TA_DEEPSEEK_REVISION / TA_DEEPSEEK_ENDPOINT / TA_DEEPSEEK_PROXY` 配置。仅配密钥不会自动调用真实模型，未配置时创建任务返回 409。
 
-返回 `waiting_teacher` 后，通过 `GET /v1/rubric-drafts/{draft_id}` 查看 `body` 和 `revision`，再由老师显式 `POST /v1/rubric-drafts/{draft_id}/confirm`，内容为 `{"expected_revision":1}`。若不满意，可用现有手动入口另建细则草稿；本轮未实现 Agent 草稿修改/驳回的网页操作。确认生成的固定版本可用于现有导入、批改、复核和导出链路。
+返回 `waiting_teacher` 后，通过 `GET /v1/rubric-drafts/{draft_id}` 查看 `body` 和 `revision`，再由老师显式 `POST /v1/rubric-drafts/{draft_id}/confirm`，内容为 `{"expected_revision":1}`。若不满意，可在面板填写“对当前草稿的修改意见”并选择“按修改意见生成新版”，或用手动入口另建草稿；新版仍需独立确认。已有确认的草稿也可以作为新版来源，原固定版本不变。接口及版本语义见 [修订说明](AGENT_REVISION_2026-10-22.md)。确认生成的固定版本可用于现有导入、批改、复核和导出链路。
 
 ## 网页入口（2026-10-22）
 

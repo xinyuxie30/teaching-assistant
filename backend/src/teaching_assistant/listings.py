@@ -504,11 +504,13 @@ async def rubric_detail(session, teacher: UUID, rubric_id: UUID) -> dict:
 
 
 async def draft_detail(session, teacher: UUID, draft_id: UUID) -> dict:
+    from teaching_assistant.agent.service import draft_revision_comparison
+
     value = await session.get(RubricDraft, draft_id)
     if value is None:
         raise DomainError("not_found", "Draft not found", 404)
     await owned_question(session, teacher, value.question_version_id)
-    return {
+    result = {
         key: json_value(getattr(value, key))
         for key in (
             "id",
@@ -519,6 +521,8 @@ async def draft_detail(session, teacher: UUID, draft_id: UUID) -> dict:
             "confirmed_version_id",
         )
     }
+    result["revision_comparison"] = await draft_revision_comparison(session, teacher, value)
+    return result
 
 
 async def answer_detail(session, teacher: UUID, answer_id: UUID) -> dict:

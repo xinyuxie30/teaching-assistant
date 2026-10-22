@@ -7,6 +7,7 @@ from teaching_assistant import service
 from teaching_assistant.agent.context import initial_messages, manifest, payload, tool_result
 from teaching_assistant.db import AgentEvent, AgentRun, RubricDraft
 from teaching_assistant.domain import DomainError, ModelError, digest
+from teaching_assistant.rubric_diff import compare_rubrics
 from teaching_assistant.schemas import json_time
 
 
@@ -162,6 +163,33 @@ def revision_source(run):
         "id": str(run.source_draft_id),
         "revision": run.revision_context["source_revision"],
         "content_hash": run.revision_context["source_content_hash"],
+    }
+
+
+async def draft_revision_comparison(session, teacher, draft):
+    """Called inside the authorized draft detail's repeatable-read snapshot."""
+    run = await session.scalar(
+        select(AgentRun).where(
+            AgentRun.teacher_id == teacher,
+            AgentRun.question_version_id == draft.question_version_id,
+            AgentRun.draft_id == draft.id,
+            AgentRun.source_draft_id.is_not(None),
+        )
+    )
+    if run is None:
+        return None
+    source_body = run.revision_context["source_rubric"]
+    return {
+        "run_id": str(run.id),
+        "source": revision_source(run),
+        "feedback": run.revision_context["feedback"],
+        "source_body": source_body,
+        "target": {
+            "id": str(draft.id),
+            "revision": draft.revision,
+            "content_hash": digest(draft.body),
+        },
+        "difference": compare_rubrics(source_body, draft.body),
     }
 
 

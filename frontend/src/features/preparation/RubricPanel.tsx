@@ -7,12 +7,13 @@ import { dateTime, ErrorNotice, Loading, Pager } from "../../components/common";
 import { useAccepted, WriteFeedback } from "./common";
 import { AgentPanel } from "./AgentPanel";
 import { RubricDocument, RubricEditor } from "./RubricEditor";
+import { RubricComparison } from "./RubricComparison";
 import { PreparationSession, usePreparationState } from "./session";
 
 type Selection = { kind: "editor"; source?: { id: string; body: Rubric } }
   | { kind: "draft" | "version"; id: string };
 
-function SavedRule({ api, store, selection, question, onSelected, onEdit }: {
+export function SavedRule({ api, store, selection, question, onSelected, onEdit }: {
   api: ApiClient; store: PreparationSession; selection: { kind: "draft" | "version"; id: string };
   question: QuestionDetail; onSelected: (id: string) => void; onEdit: (source: { id: string; body: Rubric }) => void;
 }) {
@@ -33,7 +34,12 @@ function SavedRule({ api, store, selection, question, onSelected, onEdit }: {
   return <section className="panel prep-card"><div className="panel-toolbar prep-toolbar">
     <h2>{"version" in data ? `已确认细则 · 第 ${data.version} 版` : frozenId ? "草稿已确认" : "检查并确认评分细则"}</h2>
     <Tag color={frozenId ? "green" : "orange"}>{frozenId ? "固定版本" : "尚未确认"}</Tag></div>
-    <ErrorNotice error={resource.error} retry={resource.refresh} /><RubricDocument body={data.body} />
+    <ErrorNotice error={resource.error} retry={resource.refresh} />
+    {"revision_comparison" in data && data.revision_comparison && <>
+      <RubricComparison comparison={data.revision_comparison} body={data.body} />
+      <h3>新版完整细则</h3>
+    </>}
+    <RubricDocument body={data.body} />
     <p className="muted small">请核对每个评分点的描述及分值。确认后保持固定，修改需创建新的版本。</p>
     <div className="button-row">{frozenId
       ? <Button type="primary" onClick={() => onSelected(frozenId)}>使用这份固定细则，导入答案</Button>

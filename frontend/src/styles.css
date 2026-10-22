@@ -160,6 +160,24 @@ fieldset > .ant-select { width: 100%; }
 .rubric-levels li { display: flex; gap: 16px; padding: 10px 0; align-items: flex-start; border-top: 1px solid #e2e8db; }
 .rubric-levels strong { min-width: 65px; flex-shrink: 0; font-size: 13px; }
 .rubric-levels span { min-width: 0; font-size: 13px; line-height: 1.8; }
+.rubric-comparison { margin: 20px 0; padding: 20px; background: #f4f7ef; border: 1px solid #dfe7d9; border-radius: 10px; overflow-wrap: anywhere; }
+.rubric-comparison p { line-height: 1.8; margin: 8px 0; }
+.rubric-comparison h4 { margin: 0 0 8px; font-size: 13px; }
+.rubric-comparison-feedback { padding: 12px; background: #fff; border-radius: 6px; }
+.rubric-comparison-summary { margin: 14px 0; }
+.rubric-comparison-change { margin: 16px 0; padding-top: 14px; border-top: 1px solid #dfe7d9; }
+.rubric-comparison-pair { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 14px; margin-top: 12px; }
+.rubric-comparison-side { min-width: 0; padding: 14px; background: #fff; border: 1px solid #e1e7dd; border-radius: 7px; }
+.rubric-comparison-levels { list-style: none; padding: 0; margin: 12px 0 0; }
+.rubric-comparison-levels li { padding: 10px; border-top: 1px solid #e5eadd; }
+.rubric-comparison-level-title { display: flex; align-items: baseline; gap: 8px; flex-wrap: wrap; }
+.rubric-level-changed, .rubric-comparison-empty { background: #fff5df; border-radius: 5px; }
+.rubric-comparison-empty { padding: 12px; }
+.rubric-changed-value { font-weight: 600; color: #805725; }
+@media (max-width: 760px) {
+  .rubric-comparison { padding: 14px; }
+  .rubric-comparison-pair { grid-template-columns: minmax(0, 1fr); }
+}
 .prep-list-tabs { margin-bottom: 20px; }
 .agent-panel { margin-bottom: 22px; background: #fbfcf8; border-color: #dfe7d9; }
 .agent-form { display: flex; flex-direction: column; gap: 10px; }

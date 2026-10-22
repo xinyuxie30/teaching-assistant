@@ -147,7 +147,26 @@ export interface DraftRow extends RecordHeader {
   question_version_id: string; revision: number; confirmed_version_id: string | null;
   status: "draft" | "confirmed";
 }
-export interface DraftDetail extends Omit<DraftRow, "status"> { body: Rubric }
+export type RubricChangeStatus = "added" | "removed" | "modified" | "unchanged";
+export interface RubricRowChange { id: string; status: RubricChangeStatus; changed_fields: string[] }
+export interface RubricRevisionComparison {
+  run_id: string;
+  source: { id: string; revision: number; content_hash: string };
+  target: { id: string; revision: number; content_hash: string };
+  feedback: string;
+  source_body: Rubric;
+  difference: {
+    has_changes: boolean;
+    summary: Record<RubricChangeStatus, number>;
+    global_fields: ("global_instructions" | "selection_policy" | "rounding_policy")[];
+    criterion_order_changed: boolean;
+    criteria: (RubricRowChange & { levels: RubricRowChange[] })[];
+  };
+}
+export interface DraftDetail extends Omit<DraftRow, "status"> {
+  body: Rubric;
+  revision_comparison?: RubricRevisionComparison | null;
+}
 export interface DraftReceipt { id: string; revision: number; rubric: Rubric }
 export interface ImportRow {
   student_id: string; question_version_id: string; external_submission_id: string;

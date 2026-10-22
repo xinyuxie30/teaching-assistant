@@ -148,6 +148,12 @@ test("one synthetic assignment: preparation, fake evaluation, review and both ex
     assert(await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth), "Revision UI must fit a narrow screen");
     await page.setViewportSize({ width: 1440, height: 1000 });
     await click("打开草稿并确认");
+    const comparison = page.locator('[aria-label="修订差异"]');
+    await comparison.waitFor();
+    const comparisonText = await comparison.textContent();
+    assert(comparisonText.includes(feedback), "comparison must show the captured feedback");
+    // The simulator returns the source unchanged here, so this also covers the no-change message.
+    assert(comparisonText.includes("新版与原稿内容一致"));
     const { body: agentRubric } = await post(`/v1/rubric-drafts/${agentRun.draft_id}/confirm`, () => click("确认并固定评分细则"));
     assert.equal(agentRubric.version, 1);
     await eventually("agent run completes after the teacher confirms", async () => {

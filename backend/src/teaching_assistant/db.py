@@ -187,11 +187,17 @@ class AgentRun(Entity, Base):
             "status IN ('queued','running','waiting_teacher','completed','failed','cancelled')"
         ),
         CheckConstraint("models_used >= 0 AND tools_used >= 0 AND event_seq >= 0"),
+        CheckConstraint(
+            "(source_draft_id IS NULL) = (revision_context IS NULL)",
+            name="ck_agent_revision_source",
+        ),
         Index("ix_agent_runs_ready", "status", "ready_at", "lease_until"),
     )
     teacher_id: Mapped[UUID] = mapped_column(ForeignKey("teachers.id"), index=True)
     question_version_id: Mapped[UUID] = mapped_column(ForeignKey("question_versions.id"))
     draft_id: Mapped[UUID | None] = mapped_column(ForeignKey("rubric_drafts.id"))
+    source_draft_id: Mapped[UUID | None] = mapped_column(ForeignKey("rubric_drafts.id"))
+    revision_context: Mapped[dict[str, Any] | None] = mapped_column(JSONB(none_as_null=True))
     profile_id: Mapped[str] = mapped_column(String(80))
     manifest: Mapped[dict[str, Any]] = mapped_column(JSONB)
     limits: Mapped[dict[str, Any]] = mapped_column(JSONB)

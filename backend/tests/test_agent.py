@@ -416,3 +416,69 @@ async def test_parallel_claim_and_batched_calls_create_only_one_draft(
         assert [m["tool_call_id"] for m in results] == ["read", "save", "extra-save"]
         assert json.loads(results[-1]["content"])["error_code"] == "waiting_teacher"
         assert await session.scalar(select(func.count()).select_from(RubricDraft)) == 2
+
+
+async def test_agent_history_is_question_scoped_and_cursor_bound(db, settings, client, scenario):
+    runs = [await start(client, scenario, instructions=f"历史任务 {i}") for i in range(4)]
+    await post(client, f"/v1/agent-runs/{runs[0]['id']}/cancel", {})
+    # Tie the timestamp deliberately: ID must give stable page boundaries.
+    async with db.sessions.begin() as session:
+        now = await session.scalar(select(func.clock_timestamp()))
+        for run in runs:
+            row = await session.get(AgentRun, UUID(run["id"]))
+            row.created_at = now
+    question = await post(
+        client,
+        f"/v1/assignments/{scenario['assignment']['id']}/question-versions",
+        {
+            "question_key": "another",
+            "prompt": "Other question",
+            "reference": "Other reference",
+            "maximum_points": "10.00",
+        },
+    )
+    await post(client, f"/v1/question-versions/{question['id']}/rubric-agent-runs", {})
+    params = {"question_version_id": scenario["question"]["id"], "limit": 2}
+    first = (await client.get("/v1/agent-runs", params=params)).json()
+    assert first["total"] == 4 and first["has_more"] and first["next_cursor"]
+    second = (
+        await client.get("/v1/agent-runs", params={**params, "cursor": first["next_cursor"]})
+    ).json()
+    assert not second["has_more"] and second["total"] == 4
+    actual = [row["id"] for row in first["items"] + second["items"]]
+    assert actual == sorted([run["id"] for run in runs], reverse=True)
+    assert all("messages" not in row and "pending_calls" not in row for row in first["items"])
+    for change in ({"status": "cancelled"}, {"question_version_id": question["id"]}):
+        response = await client.get(
+            "/v1/agent-runs", params={**params, "cursor": first["next_cursor"], **change}
+        )
+        assert response.status_code == 422 and response.json()["code"] == "invalid_cursor"
+    cancelled = (
+        await client.get("/v1/agent-runs", params={**params, "status": "cancelled"})
+    ).json()
+    assert cancelled["total"] == 1 and cancelled["items"][0]["id"] == runs[0]["id"]
+
+    other_settings = settings.model_copy(update={"dev_api_token": "other-" + uuid4().hex})
+    await bootstrap(db, other_settings)
+    async with httpx.AsyncClient(
+        transport=httpx.ASGITransport(app=create_app(other_settings, db)),
+        base_url="http://test",
+        headers={"Authorization": f"Bearer {other_settings.dev_api_token}"},
+    ) as other:
+        assert (await other.get("/v1/agent-runs")).json()["total"] == 0
+        assert (await other.get("/v1/agent-runs", params=params)).status_code == 404
+
+
+async def test_agent_history_cursor_cannot_cross_teacher(db, settings, client, scenario):
+    await start(client, scenario)
+    await start(client, scenario)
+    cursor = (await client.get("/v1/agent-runs", params={"limit": 1})).json()["next_cursor"]
+    other_settings = settings.model_copy(update={"dev_api_token": "other-" + uuid4().hex})
+    await bootstrap(db, other_settings)
+    async with httpx.AsyncClient(
+        transport=httpx.ASGITransport(app=create_app(other_settings, db)),
+        base_url="http://test",
+        headers={"Authorization": f"Bearer {other_settings.dev_api_token}"},
+    ) as other:
+        response = await other.get("/v1/agent-runs", params={"cursor": cursor})
+        assert response.status_code == 422 and response.json()["code"] == "invalid_cursor"

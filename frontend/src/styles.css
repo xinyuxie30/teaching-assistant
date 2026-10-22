@@ -164,6 +164,11 @@ fieldset > .ant-select { width: 100%; }
 .agent-panel { margin-bottom: 22px; background: #fbfcf8; border-color: #dfe7d9; }
 .agent-form { display: flex; flex-direction: column; gap: 10px; }
 .agent-form .ant-select { width: 100%; max-width: 460px; }
+.agent-revision { margin-top: 22px; padding-top: 18px; border-top: 1px solid #e6ecdf; }
+.agent-revision p { margin: 0; }
+.agent-revision-source { margin-top: 20px; padding: 16px; border: 1px solid #e6ecdf; border-radius: 8px; background: #f2f6ee; font-size: 13px; line-height: 1.8; overflow-wrap: anywhere; }
+.agent-revision-source p { margin: 0 0 10px; }
+.agent-revision-feedback { white-space: pre-wrap; }
 .agent-status { display: flex; gap: 18px; flex-wrap: wrap; margin-top: 18px; }
 .agent-events { list-style: none; margin: 14px 0 0; padding: 0; border-top: 1px solid #e6ecdf; }
 .agent-events li { display: flex; gap: 12px; align-items: baseline; flex-wrap: wrap; padding: 7px 0; border-bottom: 1px solid #eef1e9; font-size: 12px; }

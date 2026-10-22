@@ -47,6 +47,12 @@ test("one synthetic assignment: preparation, fake evaluation, review and both ex
       await route.abort("blockedbyclient");
     } else await route.continue();
   });
+  await page.route(`${config.origin}/v1/question-versions/*/rubric-agent-runs`, async (route) => {
+    if (route.request().postDataJSON()?.agent_profile !== "fake-rubric-agent-v1") {
+      browserErrors.push("Blocked an agent run that did not explicitly select the simulator");
+      await route.abort("blockedbyclient");
+    } else await route.continue();
+  });
   const click = (name) => page.getByRole("button", { name, exact: true }).click();
   const fill = (label, value) => page.getByLabel(label, { exact: true }).fill(value);
   const post = (path, action) => postAction(page, config.origin, path, action);
@@ -97,7 +103,38 @@ test("one synthetic assignment: preparation, fake evaluation, review and both ex
     assert.equal(question.version, 1);
     report.ids.question = question.id;
     await click("打开题目，准备评分细则");
-    await click("起草新细则");
+    await click("用 Agent 起草");
+    await click("开始起草");
+    let agentRun;
+    await eventually("agent run waits for the teacher", async () => {
+      const listing = await get("/v1/agent-runs?limit=20");
+      agentRun = listing.items.find((item) => item.question_version_id === question.id);
+      assert(agentRun, "an agent run must be created for this question");
+      assert.equal(agentRun.status, "waiting_teacher");
+      assert.equal(agentRun.simulation, true);
+      assert(agentRun.draft_id, "waiting_teacher must point at a saved draft");
+    }, 60_000);
+    // The simulator reads the question and proposes a draft: two model calls, two tool calls.
+    assert.equal(agentRun.models_used, 2);
+    assert.equal(agentRun.tools_used, 2);
+    await page.getByText("等待老师确认", { exact: true }).first().waitFor();
+    await page.getByText("模拟器只走通工程流程，生成的草稿不能作为教学标准。", { exact: true }).waitFor();
+    const agentDraft = await get(`/v1/rubric-drafts/${agentRun.draft_id}`);
+    assert.equal(agentDraft.body.criteria.length, 1);
+    assert.equal(agentDraft.body.criteria[0].maximum_points, "10.00");
+    await click("打开草稿并确认");
+    const { body: agentRubric } = await post(`/v1/rubric-drafts/${agentRun.draft_id}/confirm`, () => click("确认并固定评分细则"));
+    assert.equal(agentRubric.version, 1);
+    await eventually("agent run completes after the teacher confirms", async () => {
+      const detail = await get(`/v1/agent-runs/${agentRun.id}`);
+      assert.equal(detail.status, "completed");
+      assert.equal(detail.draft_id, agentRun.draft_id);
+    });
+    report.ids.agentRun = agentRun.id;
+    report.ids.agentDraft = agentRun.draft_id;
+    checkpoint("Agent drafted through the page, waited for the teacher, then completed with the confirmation");
+    // The manual path stays the source of the two-criterion rubric used by the rest of this fixture.
+    await click("手动起草");
     await fill("整体评分说明", "两个独立评分点，仅用于浏览器回归，不用于教学质量评测。");
     await fill("评分点 1 评估内容", "解释统一规则");
     await fill("评分点 1 等级 1 描述", "未解释统一规则");
@@ -112,7 +149,8 @@ test("one synthetic assignment: preparation, fake evaluation, review and both ex
     assert.equal(draft.rubric.criteria.length, 2);
     await click("查看并确认这份草稿");
     const { body: rubric } = await post(`/v1/rubric-drafts/${draft.id}/confirm`, () => click("确认并固定评分细则"));
-    assert.equal(rubric.version, 1);
+    // Version 1 was the agent draft confirmed above; the manual rubric is version 2.
+    assert.equal(rubric.version, 2);
     report.ids.rubric = rubric.id;
     checkpoint("Created isolated roster, question and confirmed rubric through the UI");
     await click("使用这份固定细则，导入答案");

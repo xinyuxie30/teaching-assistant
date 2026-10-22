@@ -5,14 +5,15 @@ import { useOperation } from "../../api/hooks";
 import type { AssignmentDetail, ImportPayload, ImportPreview, ImportReceipt, QuestionDetail } from "../../api/types";
 import { ErrorNotice } from "../../components/common";
 import { Field, FormErrors, useAccepted, WriteFeedback } from "./common";
-import { answerIdentity, charCount, emptyAnswer, formErrors, importForCommit, manualImport, pastedImport, submissionId } from "./contracts";
+import { answerIdentity, charCount, csvImport, emptyAnswer, formErrors, importForCommit, manualImport, pastedImport, submissionId } from "./contracts";
 import type { AnswerEntry, PreviewGate } from "./contracts";
 import { PreparationSession, usePreparationState } from "./session";
 
 interface ImportForm {
-  mode: "manual" | "json"; rows: AnswerEntry[]; json: string; preview?: PreviewGate; receipt?: ImportReceipt;
+  mode: "manual" | "json" | "csv"; rows: AnswerEntry[]; json: string; csv: string;
+  preview?: PreviewGate; receipt?: ImportReceipt;
 }
-const initialImport = (): ImportForm => ({ mode: "manual", rows: [emptyAnswer()], json: "" });
+const initialImport = (): ImportForm => ({ mode: "manual", rows: [emptyAnswer()], json: "", csv: "" });
 
 export function AnswerImport({ api, store, assignment, question, onBatch }: {
   api: ApiClient; store: PreparationSession; assignment: AssignmentDetail; question: QuestionDetail; onBatch: () => void;
@@ -28,7 +29,9 @@ export function AnswerImport({ api, store, assignment, question, onBatch }: {
   useAccepted<ImportReceipt>(write, (receipt) => form.update((value) => ({ ...value, receipt }), false));
   const payloadFor = (value: ImportForm): ImportPayload => value.mode === "manual"
     ? manualImport(value.rows, assignment.roster, question.id)
-    : pastedImport(value.json, assignment.roster, question.id);
+    : value.mode === "csv"
+      ? csvImport(value.csv, assignment.roster, question.id)
+      : pastedImport(value.json, assignment.roster, question.id);
   const edit = (change: (value: ImportForm) => ImportForm) => {
     form.update((value) => ({ ...change(value), preview: undefined }));
     setErrors([]); setPreviewError(undefined);
@@ -72,7 +75,7 @@ export function AnswerImport({ api, store, assignment, question, onBatch }: {
   return <section className="panel prep-card"><h2>导入文本答案</h2>
     <p className="muted">题号 {question.question_key} · 题目第 {question.version} 版 · 固定名单 {assignment.roster.length} 人</p>
     <Segmented disabled={disabled} value={form.value.mode} onChange={(value) => edit((v) => ({ ...v, mode: value as ImportForm["mode"] }))}
-      options={[{ value: "manual", label: "逐份录入" }, { value: "json", label: "粘贴结构化答案" }]} />
+      options={[{ value: "manual", label: "逐份录入" }, { value: "json", label: "粘贴结构化答案" }, { value: "csv", label: "粘贴或选择 CSV" }]} />
     <p className="muted small prep-hint">空字符串表示已提交空白答案；未交作业的学生请不要添加答案行。修改已导入内容时请使用新的提交版本。</p>
     {form.value.mode === "manual" ? <>
       {form.value.rows.map((row, index) => <section key={row.key} className="answer-entry">
@@ -92,7 +95,26 @@ export function AnswerImport({ api, store, assignment, question, onBatch }: {
             value={row.external_submission_id} onChange={(event) => editRow(row.key, { external_submission_id: event.target.value })} /></Field> }]} />
       </section>)}
       <Button disabled={disabled || form.value.rows.length >= 200} onClick={() => edit((v) => ({ ...v, rows: [...v.rows, emptyAnswer()] }))}>添加一份答案</Button>
-    </> : <div className="prep-json">
+    </> : form.value.mode === "csv" ? <div className="prep-json">
+      <p className="muted small">第一行必须是表头，UTF-8 编码。可用列：<code>external_student_id</code>（学号，必填）、<code>answer_text</code>（原文，必填）、
+        <code>external_submission_id</code>（可选，默认按学号生成）、<code>source_revision</code>（可选，默认 initial）。
+        含逗号、换行或引号的原文请用双引号包裹。</p>
+      <pre className="json-example">{`external_student_id,answer_text,source_revision
+${assignment.roster[0]?.external_id || "学号"},"第一行
+第二行",initial`}</pre>
+      <input className="csv-file" type="file" accept=".csv,text/csv" aria-label="选择 CSV 文件" disabled={disabled}
+        onChange={(event) => {
+          const file = event.target.files?.[0];
+          event.target.value = "";
+          if (!file) return;
+          if (file.size > 2_000_000) { setErrors(["CSV 文件超过 2 MB，请拆分后导入。"]); return; }
+          void file.text().then((text) => edit((v) => ({ ...v, csv: text })))
+            .catch(() => setErrors(["CSV 文件无法读取，请确认是 UTF-8 文本。"]));
+        }} />
+      <Input.TextArea aria-label="CSV 答案" className="json-input" autoSize={{ minRows: 8, maxRows: 24 }} disabled={disabled}
+        maxLength={12_500_000} value={form.value.csv} placeholder="粘贴 CSV 内容，或在上方选择一个 .csv 文件。"
+        onChange={(event) => edit((v) => ({ ...v, csv: event.target.value }))} />
+    </div> : <div className="prep-json">
       <p className="muted small">使用学号关联当前名单，不需要填写数据库 ID。原文中的换行可写成 \n；需要保留 CRLF 时写成 \r\n。</p>
       <pre className="json-example">{JSON.stringify([{ external_student_id: assignment.roster[0]?.external_id || "学号", external_submission_id: "来源编号", source_revision: "initial", answer_text: "学生原文\r\n第二行" }], null, 2)}</pre>
       <Input.TextArea aria-label="结构化答案 JSON" className="json-input" autoSize={{ minRows: 8, maxRows: 24 }} disabled={disabled}

@@ -161,7 +161,17 @@ fieldset > .ant-select { width: 100%; }
 .rubric-levels strong { min-width: 65px; flex-shrink: 0; font-size: 13px; }
 .rubric-levels span { min-width: 0; font-size: 13px; line-height: 1.8; }
 .prep-list-tabs { margin-bottom: 20px; }
+.agent-panel { margin-bottom: 22px; background: #fbfcf8; border-color: #dfe7d9; }
+.agent-form { display: flex; flex-direction: column; gap: 10px; }
+.agent-form .ant-select { width: 100%; max-width: 460px; }
+.agent-status { display: flex; gap: 18px; flex-wrap: wrap; margin-top: 18px; }
+.agent-events { list-style: none; margin: 14px 0 0; padding: 0; border-top: 1px solid #e6ecdf; }
+.agent-events li { display: flex; gap: 12px; align-items: baseline; flex-wrap: wrap; padding: 7px 0; border-bottom: 1px solid #eef1e9; font-size: 12px; }
+.agent-event-kind { min-width: 96px; color: #33452f; font-weight: 500; }
+.agent-event-time { margin-left: auto; }
 .prep-json { margin: 20px 0; }
+.prep-json code { background: #eef2e8; padding: 1px 5px; border-radius: 4px; font-size: 12px; }
+.csv-file { display: block; margin: 12px 0; color: #526858; font-size: 12px; }
 .json-example { font-size: 12px; background: #f5f7f0; padding: 16px; border-radius: 8px; overflow-x: auto; }
 .json-input { font-family: Consolas, monospace; font-size: 12px; }
 .preview-answer { max-height: 400px; overflow-y: auto; font: inherit; line-height: 1.9; background: #f6f8f3; padding: 16px; margin-top: 12px; }

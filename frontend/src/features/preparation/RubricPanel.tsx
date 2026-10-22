@@ -5,6 +5,7 @@ import { useOperation, usePage, useResource } from "../../api/hooks";
 import type { DraftDetail, DraftRow, QuestionDetail, Rubric, RubricDetail, RubricRow, VersionReceipt } from "../../api/types";
 import { dateTime, ErrorNotice, Loading, Pager } from "../../components/common";
 import { useAccepted, WriteFeedback } from "./common";
+import { AgentPanel } from "./AgentPanel";
 import { RubricDocument, RubricEditor } from "./RubricEditor";
 import { PreparationSession, usePreparationState } from "./session";
 
@@ -47,11 +48,19 @@ export function RubricPanel({ api, store, question, selectedId, onSelected }: {
 }) {
   const view = usePreparationState<Selection | undefined>(store, `rubric-view:${question.id}`, () => undefined);
   const [listTab, setListTab] = useState<"versions" | "drafts">("versions");
+  const [agentOpen, setAgentOpen] = useState(false);
   const versions = usePage<RubricRow>(api, `/v1/question-versions/${question.id}/rubric-versions`);
   const drafts = usePage<DraftRow>(api, `/v1/question-versions/${question.id}/rubric-drafts`);
   return <div className="prep-stack"><section className="panel prep-card">
     <div className="panel-toolbar prep-toolbar"><div><h2>评分细则版本</h2><p className="muted small">先打开并检查一份固定规则，再明确选择它用于本次导入与批次。</p></div>
-      <Button onClick={() => view.set({ kind: "editor" }, false)}>起草新细则</Button></div>
+      <div className="button-row">
+        <Button onClick={() => view.set({ kind: "editor" }, false)}>手动起草</Button>
+        <Button onClick={() => setAgentOpen((open) => !open)}>{agentOpen ? "收起 Agent" : "用 Agent 起草"}</Button>
+      </div></div>
+    {agentOpen && <AgentPanel api={api} store={store} question={question} onOpenDraft={(id) => {
+      view.set({ kind: "draft", id }, false);
+      drafts.first();
+    }} />}
     <div className="button-row prep-list-tabs"><Button type={listTab === "versions" ? "primary" : "default"} onClick={() => { setListTab("versions"); versions.first(); }}>已确认版本</Button>
       <Button type={listTab === "drafts" ? "primary" : "default"} onClick={() => { setListTab("drafts"); drafts.first(); }}>已保存草稿</Button>
       <Button onClick={() => { versions.first(); drafts.first(); }}>刷新</Button></div>

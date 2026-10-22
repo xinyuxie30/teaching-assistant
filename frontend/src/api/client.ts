@@ -29,6 +29,12 @@ export function errorMessage(error: unknown): string {
     invalid_import_scope: "答案中的学生或题目不属于这份作业，请重新检查固定名单和题目版本。",
     unknown_evaluation_profile: "所选评估配置已不可用，请刷新配置并重新选择。",
     model_not_configured: "该模型尚未完成后端配置，请选择可用配置。",
+    agent_not_cancellable: "该任务已在等待确认或已结束，不能取消。",
+    agent_model_budget_exhausted: "模型调用预算已用完，草稿没有生成。",
+    agent_tool_budget_exhausted: "工具调用预算已用完，草稿没有生成。",
+    agent_missing_draft: "模型声称完成但没有保存草稿，任务已停止。",
+    agent_deadline_exceeded: "任务超过执行期限，已停止。",
+    agent_profile_mismatch: "运行配置与后端 Worker 不一致，任务未被执行。",
   };
   return messages[error.code] || `请求未完成（${error.code || error.status}）。`;
 }

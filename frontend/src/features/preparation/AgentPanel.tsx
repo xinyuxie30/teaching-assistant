@@ -89,9 +89,9 @@ export function AgentPanel({ api, store, question, onOpenDraft }: {
         onChange={(event) => kept.update((state) => ({ ...state, instructions: event.target.value }), false)} />
       {!ready && <Alert type="warning" showIcon title="所选配置尚未完成后端配置，暂时不能发起任务。" />}
       <div className="button-row">
-        <Button type="primary" onClick={start} disabled={!ready || active}
+        <Button type="primary" onClick={start} disabled={!ready || active || create.locked}
           loading={create.phase === "sending"}>开始起草</Button>
-        {active && <Button danger onClick={stop} loading={cancel.phase === "sending"}>取消任务</Button>}
+        {active && <Button danger onClick={stop} disabled={cancel.locked} loading={cancel.phase === "sending"}>取消任务</Button>}
         {run.data?.status === "waiting_teacher" && run.data.draft_id && <Button type="primary"
           onClick={() => onOpenDraft(run.data!.draft_id!)}>打开草稿并确认</Button>}
         <Button onClick={() => { run.refresh(); events.refresh(); }} disabled={!kept.value.runId}>刷新状态</Button>

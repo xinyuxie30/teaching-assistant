@@ -6,7 +6,7 @@ import type { AgentEventPage, AgentProfileList, AgentRun, QuestionDetail } from 
 import { dateTime, ErrorNotice } from "../../components/common";
 import {
   agentActive, agentBudget, agentErrorText, agentEventDetail, agentEventText,
-  agentStatusColor, agentStatusText,
+  agentStatusColor, agentStatusText, preferredRun,
 } from "./agent";
 import { useAccepted, WriteFeedback } from "./common";
 import { PreparationSession, usePreparationState } from "./session";
@@ -21,11 +21,16 @@ export function AgentPanel({ api, store, question, onOpenDraft }: {
   const kept = usePreparationState<AgentState>(store, `agent:${question.id}`, () => ({}));
   const profiles = useResource<AgentProfileList>(api, "/v1/agent-profiles");
   const history = usePage<AgentRun>(api, "/v1/agent-runs", { question_version_id: question.id });
+  const currentRunId = kept.value.runId;
   useEffect(() => {
-    if (!kept.value.runId && history.data?.items[0]) {
-      kept.update((value) => ({ ...value, runId: value.runId || history.data!.items[0].id }), false);
-    }
-  }, [kept, history.data]);
+    if (currentRunId || !history.data?.items.length) return;
+    const preferred = preferredRun(history.data.items);
+    if (!preferred) return;
+    const key = `agent:${question.id}`;
+    // Read the store again: a creation may have selected a run after this effect was scheduled.
+    const latest = store.get<AgentState>(key, () => ({}));
+    if (!latest.value.runId) store.set(key, { ...latest.value, runId: preferred.id }, false);
+  }, [currentRunId, history.data, store, question.id]);
   const run = useResource<AgentRun>(
     api,
     kept.value.runId ? `/v1/agent-runs/${kept.value.runId}` : null,
@@ -59,7 +64,8 @@ export function AgentPanel({ api, store, question, onOpenDraft }: {
   const unknownRun = Boolean(kept.value.runId && (!run.data || run.error));
   const canRevise = Boolean(run.data?.draft_id
     && (run.data.status === "waiting_teacher" || run.data.status === "completed"));
-  const cannotCreate = !ready || active || writing || unknownRun || history.loading || !!history.error;
+  // A failed history read is shown with its own retry; it must not block a fresh draft.
+  const cannotCreate = !ready || active || writing || unknownRun;
 
   const start = () => {
     if (!selected) return;

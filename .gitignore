@@ -12,3 +12,8 @@ __pycache__/
 dist/
 evals/private/
 evals/reports/
+frontend/node_modules/
+frontend/e2e/node_modules/
+frontend/coverage/
+*.tsbuildinfo
+.workbuddy/

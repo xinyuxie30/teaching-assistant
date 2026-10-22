@@ -3,9 +3,11 @@
 审查日期：2026-10-19（America/Tijuana）。
 方式：官方文档核验和定向静态源码阅读。没有运行参考项目、调用真实模型或进行性能测试。
 
-后续更新（2026-10-20）：当前工程已有最小后端，并新增列表与 Jev 适配代码。下文是开始实施前的参考审查；不表示当前目录仍只有设计。新增适配再次核对 [Score](https://docs.typesafe.ai/primitives/score)、[模型版本](https://docs.typesafe.ai/models) 与 [confidence](https://docs.typesafe.ai/confidence) 官方文档，采用 HTTPX 直接对接固定版本的 System One 请求，没有复制参考项目源码，也没有进行账户级调用。具体实现与待验证项见 [接入说明](LISTS_AND_MODEL.md)。
+后续更新（2026-10-20）：当前工程已有最小后端，并新增列表与 Jev 适配代码。下文是开始实施前的参考审查；不表示当前目录仍只有设计。新增适配再次核对 [Score](https://docs.typesafe.ai/primitives/score)、[模型版本](https://docs.typesafe.ai/models) 与 [confidence](https://docs.typesafe.ai/confidence) 官方文档，采用 HTTPX 直接对接固定版本的 System One 请求，没有复制参考项目源码，当时没有进行账户级调用。当前说明已迁至 [API 与模型对照](API_AND_EVALUATION.md)；后续账户级测试见 [测试报告](TEST_REPORT_2026-10-20.md)。
 
 ## 1. 现状与来源
+
+2026-10-22 补充：按用户继续实现 Agent 的要求，再次定向阅读内嵌 `src` 的 `Tool.ts`、`services/tools/toolExecution.ts`、`context.ts` 与 `query.ts`。已在自主 Python 实现中落地类型化工具、受限 Hook、分层上下文、请求预算、调用结果配对和有限 Stop 修正；另由 PostgreSQL 承担持久恢复。参考位置、实际范围及代码映射见 [评分细则 Agent](RUBRIC_AGENT_2026-10-22.md)。下表仍保留首次审查时的状态，不能作为当前工程进展。
 
 | 资产 | 实际状态 | 对本项目的作用 |
 | --- | --- | --- |

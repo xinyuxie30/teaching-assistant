@@ -4,7 +4,7 @@
 
 审查未提交的修订增量：来源草稿在创建事务内锁定并快照，Worker 只读快照；新版草稿独立确认，原稿与原任务不变；普通起草的幂等哈希保持兼容。独立复跑后端 **118 passed**（83.27 s）、Ruff 53 文件、前端 **40 passed**、类型与构建通过；在全新库 `teaching_ci_test` 上按 CI 命令跑浏览器回归，**7/7 阶段、0 浏览器错误**。业务库备份 `.local/backups/teaching-before-0006.dump` 后升至 `0006`，结构、约束与 `alembic check` 通过。另用真实 DeepSeek 完成一次单题修订：2 次调用、**3,081 input / 926 output** tokens，草稿 2 个评分点、总分 10.00，确认后 `completed`；无单价，不能据此评价质量或成本。
 
-GitHub browser 失败（`checks` #39716914937，提交 `26a404a`）定位为 `getByRole('button', { name: '使用这份固定细则，导入答案' })` 的 15 秒定位器超时：`result.json` 无浏览器错误、`api.log` 无 4xx/5xx、`failed.png` 显示按钮已渲染；同代码后续三轮 CI（`59fd891` / `5c4a8de` / `e01f1ab`）全部通过。已在点击前显式等待“固定版本”标签，让失败点对准确认回执。详见 [审查与复验](AGENT_REVISION_REVIEW_2026-10-22.md)。
+GitHub browser 失败共两次（`26a404a` / `49b50c5`），均定位为测试与 React 异步状态的竞态：前者在确认细则后过早点击固定按钮，后者在预览响应后过早点击导入（`api.log` 显示 imports 请求根本没有发出）。两处已改为等待界面状态（“固定版本”标签、`.import-preview`），本地连续两轮通过；修订实现本身已在 #39734792943 通过三个 job。详见 [审查与复验](AGENT_REVISION_REVIEW_2026-10-22.md)。
 
 ## 2026-10-22：老师反馈驱动的 Agent 细则修订
 

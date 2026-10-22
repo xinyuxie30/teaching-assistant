@@ -213,6 +213,9 @@ test("one synthetic assignment: preparation, fake evaluation, review and both ex
     });
     await fill("结构化答案 JSON", originalInput);
     await post(previewPath, () => click("检查并预览本次导入"));
+    // waitForResponse resolves before React commits the preview; commit() would otherwise
+    // reject a stale preview and never send the request.
+    await page.locator(".import-preview").waitFor();
     const { body: imported, sent: committed } = await post(`/v1/assignments/${assignment.id}/imports`, () => click("确认导入预览中的答案"));
     assert.deepEqual(committed, preview.sent);
     assert.equal(imported.reused, 0);

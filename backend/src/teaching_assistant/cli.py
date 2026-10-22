@@ -13,6 +13,7 @@ from teaching_assistant.agent.worker import AgentWorker
 from teaching_assistant.db import Database, Teacher
 from teaching_assistant.domain import DomainError, text_digest
 from teaching_assistant.profiles import ProfileRegistry
+from teaching_assistant.service import audit
 from teaching_assistant.settings import Settings
 from teaching_assistant.worker import Worker
 
@@ -34,6 +35,30 @@ async def bootstrap(db: Database, settings: Settings, name: str = "开发老师"
     return {"teacher_id": str(teacher_id), "identity_mode": "local-development-token"}
 
 
+async def rotate_token(db: Database, settings: Settings, name: str = "开发老师") -> dict:
+    """Replace one teacher's development token without creating a second identity."""
+    token = settings.dev_api_token
+    if len(token) < 20 or token == "replace-with-your-own-local-token":
+        raise ValueError("Set TA_DEV_API_TOKEN to the new token (at least 20 characters)")
+    digest = text_digest(token)
+    async with db.sessions.begin() as session:
+        teachers = list(await session.scalars(select(Teacher).where(Teacher.name == name)))
+        if len(teachers) != 1:
+            raise ValueError(f"Expected exactly one teacher named {name!r}, found {len(teachers)}")
+        teacher = teachers[0]
+        if teacher.token_digest == digest:
+            return {"teacher_id": str(teacher.id), "rotated": False, "reason": "already_current"}
+        if await session.scalar(select(Teacher.id).where(Teacher.token_digest == digest)):
+            raise ValueError("The new token is already assigned to another teacher")
+        teacher.token_digest = digest
+        audit(session, teacher.id, "developer_token_rotated", teacher.id, name=name)
+    return {
+        "teacher_id": str(teacher.id),
+        "rotated": True,
+        "identity_mode": "local-development-token",
+    }
+
+
 async def run(args) -> None:
     settings = Settings()
     if args.command == "profiles":
@@ -49,6 +74,8 @@ async def run(args) -> None:
     try:
         if args.command == "bootstrap":
             print(json.dumps(await bootstrap(db, settings, args.name), ensure_ascii=False))
+        elif args.command == "rotate-token":
+            print(json.dumps(await rotate_token(db, settings, args.name), ensure_ascii=False))
         elif args.command in {"worker", "agent-worker"}:
             worker = (
                 AgentWorker(db, settings)
@@ -89,6 +116,10 @@ def main():
         "bootstrap", help="Register the configured local development token"
     )
     identity.add_argument("--name", default="开发老师")
+    rotate = commands.add_parser(
+        "rotate-token", help="Replace one teacher's development token using TA_DEV_API_TOKEN"
+    )
+    rotate.add_argument("--name", default="开发老师")
     worker = commands.add_parser("worker")
     mode = worker.add_mutually_exclusive_group()
     mode.add_argument("--once", action="store_true")

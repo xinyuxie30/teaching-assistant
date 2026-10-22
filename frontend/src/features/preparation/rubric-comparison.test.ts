@@ -1,5 +1,5 @@
 import { act, createElement } from "react";
-import type { ReactNode } from "react";
+import type { ComponentProps, ReactNode } from "react";
 import { createRoot } from "react-dom/client";
 import type { Root } from "react-dom/client";
 import { afterEach, beforeEach, expect, it, vi } from "vitest";
@@ -70,7 +70,7 @@ afterEach(async () => {
   vi.restoreAllMocks();
 });
 const response = (value: unknown) => new Response(JSON.stringify(value), { status: 200, headers: { "Content-Type": "application/json" } });
-async function render(value: DraftDetail) {
+async function render(value: DraftDetail, props: Partial<ComponentProps<typeof SavedRule>> = {}) {
   const fetch = vi.fn(async (path: string, options?: RequestInit) => {
     if (options?.method === "POST") {
       expect(path).toBe("/v1/rubric-drafts/draft-1/confirm");
@@ -80,13 +80,14 @@ async function render(value: DraftDetail) {
     return response(value);
   });
   vi.stubGlobal("fetch", fetch);
-  await mount();
+  await mount(props);
   return fetch;
 }
-async function mount() {
+async function mount(props: Partial<ComponentProps<typeof SavedRule>> = {}) {
   await act(async () => root.render(createElement(SavedRule, {
     api: new ApiClient("test"), store: new PreparationSession(), selection: { kind: "draft", id: "draft-1" },
     question: { id: "question-1" } as QuestionDetail, onSelected: vi.fn(), onEdit: vi.fn(),
+    ...props,
   })));
 }
 function button(label: string) {
@@ -94,6 +95,27 @@ function button(label: string) {
   if (!node) throw new Error(`Missing button ${label}`);
   return node;
 }
+
+it("opens the selected draft for agent feedback without confirming it or creating a task", async () => {
+  const revise = vi.fn();
+  const fetch = await render({ ...draft, revision_comparison: null }, { onRevise: revise });
+  await act(async () => button("让 Agent 修改这份草稿").click());
+  expect(revise).toHaveBeenCalledWith(draft.id);
+  expect(fetch.mock.calls.every(([, options]) => options?.method !== "POST")).toBe(true);
+});
+
+it("prevents changing the source when an agent submission has an unknown outcome", async () => {
+  const api = new ApiClient("test");
+  vi.stubGlobal("fetch", vi.fn(async () => { throw new TypeError("response lost"); }));
+  await api.operation("prepare:agent:question-1").run("/v1/question-versions/question-1/rubric-agent-runs", {
+    source_draft_id: "source-1", instructions: "原来的意见",
+  }).catch(() => undefined);
+  const revise = vi.fn();
+  await render(draft, { api, onRevise: revise });
+  expect(button("让 Agent 修改这份草稿").disabled).toBe(true);
+  await act(async () => button("让 Agent 修改这份草稿").click());
+  expect(revise).not.toHaveBeenCalled();
+});
 
 it("shows the captured source beside changes and confirms only the new draft", async () => {
   const fetch = await render(draft);

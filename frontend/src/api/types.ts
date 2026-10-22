@@ -191,7 +191,42 @@ export interface EvaluationProfile {
 export interface ProfileList { items: EvaluationProfile[]; default_alias: string }
 export interface BatchReceipt { id: string; item_ids: string[]; evaluation_profile: string }
 
-export type AgentStatus = "queued" | "running" | "waiting_teacher" | "completed" | "failed" | "cancelled";
+export type AnalysisStatus = "confirmed" | "pending_review" | "failed" | "in_progress";
+export interface AnalysisCriterion {
+  id: string; description: string; maximum_points: string; confirmed_students: number;
+  average_points: string | null; score_rate: string | null;
+  below_full_credit_students: number; below_full_credit_rate: string | null;
+  levels: (Level & { students: number })[];
+}
+export interface BatchAnalysis {
+  schema_version: "batch-analysis-v1"; snapshot_at: string; basis_hash: string; batch_id: string;
+  scope: {
+    assignment_id: string; assignment_title: string; classroom_id: string; classroom_name: string;
+    question_version_id: string; question_key: string; question_version: number;
+    rubric_version_id: string; rubric_version: number; rubric_hash: string; maximum_points: string;
+    selection_policy: string;
+  };
+  coverage: Record<AnalysisStatus, number> & {
+    assignment_roster: number; batch_answers: number; batch_students: number;
+    simulated_confirmed: number; not_in_batch: number; confirmed_rate: string | null;
+  };
+  scores: {
+    average_score: string | null; minimum_score: string | null; maximum_score: string | null;
+    reviewed_from: string | null; reviewed_to: string | null;
+    distribution: { id: "below_60" | "60_to_80" | "80_to_100" | "full"; students: number }[];
+  };
+  criteria: AnalysisCriterion[];
+}
+export interface AnalysisStudent extends RecordHeader {
+  student_id: string; student_name: string; external_student_id: string;
+  answer_version_id: string; source_revision: string; status: ItemStatus;
+  selection_status: AnalysisStatus; review_id: string | null; review_revision: number;
+  reviewed_at: string | null; confirmed_score: string | null; simulation: boolean;
+  level_id?: string; review_reason?: string;
+}
+
+export type AgentStatus = "queued" | "running" | "waiting_children" | "waiting_input" | "waiting_timer"
+  | "waiting_teacher" | "completed" | "failed" | "cancelled";
 export interface AgentProfile {
   alias: "fake-rubric-agent-v1" | "deepseek-rubric-agent-v1";
   id: string | null;
@@ -203,6 +238,16 @@ export interface AgentLimits {
   max_model_calls: number; max_tool_calls: number;
   max_context_characters: number; max_seconds: number;
 }
+export interface AgentQuestion {
+  tool_call_id: string;
+  prompt: string;
+  options: string[] | null;
+}
+export interface AgentWait {
+  token: string; root_run_id: string; reason: string; wake_at: string | null;
+  question?: AgentQuestion | null;
+}
+export interface AgentWakeInput { wait_token: string; response?: string }
 export interface AgentRun {
   id: string;
   question_version_id: string;
@@ -212,6 +257,7 @@ export interface AgentRun {
   source_draft?: { id: string; revision: number; content_hash: string } | null;
   revision_feedback?: string;
   waiting_for: string | null;
+  wait?: AgentWait | null;
   profile_id: string;
   manifest: { provider: string; model: string; revision?: string };
   simulation: boolean;

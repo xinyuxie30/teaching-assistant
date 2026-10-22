@@ -8,15 +8,15 @@
 
 ## 参考了哪些实际代码
 
-本轮定向阅读 `D:/PyChram_project/learn-claude-code-main/claude-code-main/src`，据此独立实现以下机制，没有复制其源码。该目录 README 自述为 source map 恢复树；没有验证其与某个官方发行版完整一致，也没有把外层项目许可视为内嵌代码的许可。
+本轮定向阅读本地参考源码的 `src/` 目录，据此独立实现以下机制，没有复制其源码。该目录 README 自述为 source map 恢复树；没有验证其与某个官方发行版完整一致，也没有把外层项目许可视为内嵌代码的许可。
 
 | 参考位置 | 本项目已落地的机制 |
 | --- | --- |
-| [Tool.ts:369](D:/PyChram_project/learn-claude-code-main/claude-code-main/src/Tool.ts:369)、[Tool.ts:480](D:/PyChram_project/learn-claude-code-main/claude-code-main/src/Tool.ts:480) | `ToolSpec` 注册工具、Pydantic 参数 schema、执行前的参数和对象归属检查；工具调用 ID 与结果关联 |
-| [toolExecution.ts:795](D:/PyChram_project/learn-claude-code-main/claude-code-main/src/services/tools/toolExecution.ts:795) | PreTool / PostTool 扩展点；Hook 只能在硬性工具白名单、老师范围内进一步约束执行 |
-| [context.ts:112](D:/PyChram_project/learn-claude-code-main/claude-code-main/src/context.ts:112) | 系统规则、老师任务和工具返回分别组装；题目与参考资料作为数据进入工具消息 |
-| [query.ts:355](D:/PyChram_project/learn-claude-code-main/claude-code-main/src/query.ts:355) | 每次请求前计算包含工具 schema、历史和工具结果的字符预算；超限显式失败，不截断教学原文 |
-| [query.ts:1250](D:/PyChram_project/learn-claude-code-main/claude-code-main/src/query.ts:1250) | 模型说“完成”后仍检查实际草稿；最多一次纠正反馈；接口异常不运行 Stop Hook |
+| `Tool.ts:369`、`Tool.ts:480` | `ToolSpec` 注册工具、Pydantic 参数 schema、执行前的参数和对象归属检查；工具调用 ID 与结果关联 |
+| `toolExecution.ts:795` | PreTool / PostTool 扩展点；Hook 只能在硬性工具白名单、老师范围内进一步约束执行 |
+| `context.ts:112` | 系统规则、老师任务和工具返回分别组装；题目与参考资料作为数据进入工具消息 |
+| `query.ts:355` | 每次请求前计算包含工具 schema、历史和工具结果的字符预算；超限显式失败，不截断教学原文 |
+| `query.ts:1250` | 模型说“完成”后仍检查实际草稿；最多一次纠正反馈；接口异常不运行 Stop Hook |
 
 本项目另行实现 PostgreSQL 任务与事件、租约、代次隔离和事务恢复，不能把它们当作对上述源码行为的复刻。EchoMind 本轮没有作为开发底座。
 

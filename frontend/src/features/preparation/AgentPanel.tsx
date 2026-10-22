@@ -1,11 +1,11 @@
 import { Alert, Button, Input, Select, Tag } from "antd";
-import { useEffect } from "react";
+import { useEffect, useRef } from "react";
 import { ApiClient } from "../../api/client";
 import { useOperation, usePage, useResource } from "../../api/hooks";
-import type { AgentEventPage, AgentProfileList, AgentRun, QuestionDetail } from "../../api/types";
+import type { AgentEventPage, AgentProfileList, AgentRun, AgentWakeInput, DraftDetail, QuestionDetail } from "../../api/types";
 import { dateTime, ErrorNotice } from "../../components/common";
 import {
-  agentActive, agentBudget, agentErrorText, agentEventDetail, agentEventText,
+  agentActive, agentBudget, agentErrorText, agentEventDetail, agentEventText, agentPaused,
   agentStatusColor, agentStatusText, preferredRun,
 } from "./agent";
 import { useAccepted, WriteFeedback } from "./common";
@@ -15,8 +15,9 @@ interface AgentState { runId?: string; profile?: string; instructions?: string; 
 
 const defaultInstructions = "请依据题干和参考答案，起草独立、可区分的评分点与等级。";
 
-export function AgentPanel({ api, store, question, onOpenDraft }: {
+export function AgentPanel({ api, store, question, onOpenDraft, sourceDraftId, onClearSource }: {
   api: ApiClient; store: PreparationSession; question: QuestionDetail; onOpenDraft: (id: string) => void;
+  sourceDraftId?: string; onClearSource?: () => void;
 }) {
   const kept = usePreparationState<AgentState>(store, `agent:${question.id}`, () => ({}));
   const profiles = useResource<AgentProfileList>(api, "/v1/agent-profiles");
@@ -46,24 +47,48 @@ export function AgentPanel({ api, store, question, onOpenDraft }: {
 
   const create = useOperation(api, `prepare:agent:${question.id}`);
   const cancel = useOperation(api, `prepare:agent-cancel:${kept.value.runId || "none"}`);
-  const feedback = usePreparationState<string>(store, `agent-feedback:${question.id}:${kept.value.runId || "none"}`, () => "");
+  // Keep uncertain submissions available even if polling observes that the wait already ended.
+  const wake = useOperation(api, `prepare:agent-wake:${kept.value.runId || "none"}`);
+  const pendingQuestion = run.data?.status === "waiting_input" ? run.data.wait?.question : undefined;
+  const answer = usePreparationState<string>(store,
+    `agent-answer:${question.id}:${kept.value.runId || "none"}:${run.data?.wait?.token || "none"}`, () => "");
+  const source = useResource<DraftDetail>(api, sourceDraftId ? `/v1/rubric-drafts/${sourceDraftId}` : null);
+  const feedback = usePreparationState<string>(store,
+    `agent-feedback:${question.id}:${sourceDraftId ? `draft:${sourceDraftId}` : kept.value.runId || "none"}`, () => "");
+  const revisionForm = useRef<HTMLDivElement>(null);
+  useEffect(() => {
+    if (sourceDraftId && source.data?.id === sourceDraftId && source.data.question_version_id === question.id) {
+      revisionForm.current?.scrollIntoView?.({ block: "center" });
+      revisionForm.current?.querySelector("textarea")?.focus({ preventScroll: true });
+    }
+  }, [sourceDraftId, source.data?.id, source.data?.question_version_id, question.id]);
   useAccepted<AgentRun>(create, (receipt) => {
     const key = create.ticket?.key;
     if (!key || receipt.question_version_id !== question.id || kept.value.acceptedCreation === key) return;
     kept.update((value) => ({ ...value, runId: receipt.id, acceptedCreation: key }), false);
+    onClearSource?.();
     history.first();
     run.refresh();
   });
   useAccepted<AgentRun>(cancel, () => { run.refresh(); history.refresh(); });
+  useAccepted<AgentRun>(wake, () => { run.refresh(); events.refresh(); history.refresh(); });
+  useEffect(() => {
+    if (wake.phase === "failed" && ["agent_wait_stale", "agent_wait_already_resolved"].includes(wake.error?.code || "")) {
+      run.refresh(); events.refresh(); history.refresh();
+    }
+  }, [wake.phase, wake.error, run.refresh, events.refresh, history.refresh]);
   const items = profiles.data?.items || [];
   const alias = kept.value.profile || profiles.data?.default_alias || "fake-rubric-agent-v1";
   const selected = items.find((item) => item.alias === alias) || items[0];
   const ready = Boolean(selected?.ready);
   const active = agentActive(run.data);
-  const writing = create.locked || cancel.locked;
+  const writing = create.locked || cancel.locked || wake.locked;
   const unknownRun = Boolean(kept.value.runId && (!run.data || run.error));
-  const canRevise = Boolean(run.data?.draft_id
-    && (run.data.status === "waiting_teacher" || run.data.status === "completed"));
+  const currentDraft = run.data?.draft_id
+    && (run.data.status === "waiting_teacher" || run.data.status === "completed") ? run.data.draft_id : undefined;
+  const revisionDraftId = sourceDraftId || currentDraft;
+  const wrongSource = Boolean(source.data && source.data.question_version_id !== question.id);
+  const sourceReady = !sourceDraftId || Boolean(source.data?.id === sourceDraftId && !source.error && !wrongSource);
   // A failed history read is shown with its own retry; it must not block a fresh draft.
   const cannotCreate = !ready || active || writing || unknownRun;
 
@@ -77,11 +102,11 @@ export function AgentPanel({ api, store, question, onOpenDraft }: {
   };
 
   const revise = () => {
-    if (!selected || !run.data?.draft_id || !feedback.value.trim() || cannotCreate) return;
+    if (!selected || !revisionDraftId || !sourceReady || !feedback.value.trim() || cannotCreate) return;
     void create.operation.run<AgentRun>(`/v1/question-versions/${question.id}/rubric-agent-runs`, {
       agent_profile: selected.alias,
       instructions: feedback.value.trim(),
-      source_draft_id: run.data.draft_id,
+      source_draft_id: revisionDraftId,
     }).catch(() => undefined);
   };
 
@@ -90,6 +115,13 @@ export function AgentPanel({ api, store, question, onOpenDraft }: {
     void cancel.operation.run<AgentRun>(`/v1/agent-runs/${run.data.id}/cancel`, {
       reason: "teacher_cancelled",
     }).catch(() => undefined);
+  };
+
+  const respond = () => {
+    if (!pendingQuestion || !run.data?.wait || writing || unknownRun
+      || run.data.question_version_id !== question.id || !answer.value.trim() || answer.value.length > 4000) return;
+    const payload: AgentWakeInput = { wait_token: run.data.wait.token, response: answer.value };
+    void wake.operation.run<AgentRun>(`/v1/agent-runs/${run.data.id}/wake`, payload).catch(() => undefined);
   };
 
   if (profiles.error) {
@@ -145,18 +177,28 @@ export function AgentPanel({ api, store, question, onOpenDraft }: {
       </div>
       <WriteFeedback state={create} retry={() => create.operation.retry()} />
       <WriteFeedback state={cancel} retry={() => cancel.operation.retry()} />
+      <WriteFeedback state={wake} retry={() => wake.operation.retry()} />
     </div>
-    {canRevise && <div className="agent-form agent-revision">
-      <label className="prep-label" htmlFor={`agent-feedback-${question.id}`}>对当前草稿的修改意见</label>
-      <p className="muted small">基于当前任务的草稿生成一份新版，原稿和已确认版本保留。每次修改单独计入调用预算，新版仍需你确认。</p>
+    {revisionDraftId && <div ref={revisionForm} className="agent-form agent-revision">
+      <label className="prep-label" htmlFor={`agent-feedback-${question.id}`}>{sourceDraftId ? "对所选草稿的修改意见" : "对当前草稿的修改意见"}</label>
+      <p className="muted small">基于{sourceDraftId ? "所选" : "当前任务的"}草稿生成一份新版，原稿和已确认版本保留。每次修改单独计入调用预算，新版仍需你确认。</p>
+      {sourceDraftId && <>
+        <p className="small">已选草稿：{sourceDraftId.slice(0, 8)}{source.data && !wrongSource
+          ? ` · ${source.data.body.criteria.length} 个评分点 · ${source.data.confirmed_version_id ? "已确认" : "未确认"}` : ""}</p>
+        {source.loading && <p className="muted small">正在读取所选草稿…</p>}
+        <ErrorNotice error={source.error} retry={source.refresh} />
+        {wrongSource && <div className="notice notice-error">所选草稿不属于当前题目版本，请重新选择。</div>}
+      </>}
       <Input.TextArea id={`agent-feedback-${question.id}`} autoSize={{ minRows: 2, maxRows: 6 }} maxLength={4000}
         placeholder="例如：把第二个评分点拆成两个独立评分点，并明确部分得分的条件。"
-        value={feedback.value} disabled={writing || unknownRun}
+        value={feedback.value} disabled={writing || unknownRun || !sourceReady}
         onChange={(event) => feedback.set(event.target.value, false)} />
       <div className="button-row">
-        <Button type="primary" disabled={cannotCreate || !feedback.value.trim()}
+        <Button type="primary" disabled={cannotCreate || !sourceReady || !feedback.value.trim()}
           loading={create.phase === "sending"} onClick={revise}>按修改意见生成新版</Button>
-        <Button disabled={writing || unknownRun} onClick={() => onOpenDraft(run.data!.draft_id!)}>查看本次草稿</Button>
+        <Button disabled={writing || unknownRun || !sourceReady} onClick={() => onOpenDraft(revisionDraftId)}>
+          {sourceDraftId ? "查看所选草稿" : "查看本次草稿"}</Button>
+        {sourceDraftId && <Button disabled={writing} onClick={onClearSource}>取消草稿选择</Button>}
       </div>
     </div>}
     {run.data && run.data.question_version_id !== question.id && <div className="notice notice-error">
@@ -178,7 +220,40 @@ export function AgentPanel({ api, store, question, onOpenDraft }: {
       {run.data.status === "waiting_teacher" && <div className="notice notice-success">
         草稿已保存。确认前它不会成为固定细则；确认后这个 Agent 任务会一同完成。
       </div>}
-      {active && <p className="muted small">任务执行期限 300 秒，等待你审阅的时间不计入期限。</p>}
+      {run.data.status === "waiting_children" && <div className="notice">
+        子任务正在处理，结果汇总后主任务会自动继续。
+      </div>}
+      {agentPaused(run.data) && <div className="notice warning">
+        <p>{run.data.status === "waiting_input" ? "任务已暂停，等待补充信息后恢复。" : "任务已暂停，等待预约时间恢复。"}
+          暂停期间不消耗执行时限，你仍可以取消任务。</p>
+        {run.data.wait?.reason && !pendingQuestion && <p>暂停原因：{run.data.wait.reason}</p>}
+        {pendingQuestion && <div className="agent-form">
+          <label className="prep-label" htmlFor={`agent-answer-${question.id}`}>{pendingQuestion.prompt}</label>
+          {pendingQuestion.options?.length ? <>
+            <p className="small">可以选择建议后补充，也可以直接填写回答。</p>
+            <div className="button-row">
+              {pendingQuestion.options.map((option) => <Button key={option}
+                disabled={writing || unknownRun || run.data!.question_version_id !== question.id}
+                onClick={() => answer.set(option, false)}>{option}</Button>)}
+            </div>
+          </> : null}
+          <Input.TextArea id={`agent-answer-${question.id}`} value={answer.value}
+            autoSize={{ minRows: 2, maxRows: 6 }} maxLength={4000}
+            placeholder="填写你的回答，提交后任务将继续。"
+            disabled={writing || unknownRun || run.data.question_version_id !== question.id}
+            onChange={(event) => answer.set(event.target.value, false)} />
+          <div className="button-row">
+            <Button type="primary" onClick={respond} loading={wake.phase === "sending"}
+              disabled={writing || unknownRun || run.data.question_version_id !== question.id
+                || !answer.value.trim() || answer.value.length > 4000}>提交回答并继续</Button>
+          </div>
+        </div>}
+        {run.data.status === "waiting_timer" && run.data.wait?.wake_at
+          && <p>预约恢复时间：{dateTime(run.data.wait.wake_at)}</p>}
+      </div>}
+      {active && !agentPaused(run.data) && <p className="muted small">
+        任务执行期限 {run.data.limits.max_seconds} 秒，等待你审阅的时间不计入期限。
+      </p>}
     </>}
     <ErrorNotice error={events.error} retry={events.refresh} />
     {events.data?.items.length ? <ol className="agent-events" aria-label="最近任务事件">

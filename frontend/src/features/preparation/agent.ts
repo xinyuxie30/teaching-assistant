@@ -3,6 +3,9 @@ import type { AgentEvent, AgentRun, AgentStatus } from "../../api/types";
 const statusText: Record<AgentStatus, string> = {
   queued: "排队中",
   running: "起草中",
+  waiting_children: "等待子任务",
+  waiting_input: "等待补充信息",
+  waiting_timer: "等待定时恢复",
   waiting_teacher: "等待老师确认",
   completed: "已完成",
   failed: "失败",
@@ -12,6 +15,9 @@ const statusText: Record<AgentStatus, string> = {
 const statusColor: Record<AgentStatus, string> = {
   queued: "default",
   running: "processing",
+  waiting_children: "processing",
+  waiting_input: "orange",
+  waiting_timer: "orange",
   waiting_teacher: "orange",
   completed: "green",
   failed: "red",
@@ -52,6 +58,12 @@ const events: Record<string, string> = {
   stop_hook: "完成检查",
   retry_wait: "等待重试",
   tool_skipped: "跳过工具调用",
+  child_spawned: "子任务已创建",
+  waiting_children: "等待子任务",
+  child_received: "已接收子任务结果",
+  paused: "任务已暂停",
+  woken: "任务已恢复",
+  wake_input_applied: "已接收补充信息",
   waiting_teacher: "等待老师确认",
   teacher_confirmed: "老师已确认细则",
   completed: "任务完成",
@@ -68,7 +80,12 @@ export function agentStatusColor(status: AgentStatus): string {
 }
 
 export function agentActive(run?: Pick<AgentRun, "status"> | null): boolean {
-  return run?.status === "queued" || run?.status === "running";
+  return run?.status === "queued" || run?.status === "running" || run?.status === "waiting_children"
+    || agentPaused(run);
+}
+
+export function agentPaused(run?: Pick<AgentRun, "status"> | null): boolean {
+  return run?.status === "waiting_input" || run?.status === "waiting_timer";
 }
 
 /** On a fresh page session, prefer work the teacher can act on over a newer dead run. */

@@ -1,5 +1,7 @@
 # 参考资料与接口审查
 
+更新：本文保留原始设计审查。2026-10-22 后续已参考本地源码机制实现通用 Harness、摘要压缩、并行与多层子 Agent、等待/问答和确认课程知识。v5 进一步补齐大结果引用、token/费用预留、后台查询/join、Hook 快照及 SSE，并完成真实 DeepSeek 四场景验收。当前源码映射、明确差异和验证边界见 [Harness v5](HARNESS_V5_2026-10-22.md)；下文未调用模型等表述只描述原始审查阶段。
+
 审查日期：2026-10-19。
 方式：官方文档核验和定向静态源码阅读。没有运行参考项目、调用真实模型或进行性能测试。
 
@@ -63,21 +65,21 @@ JevScoreEvaluator 输出一个评分点的结构化判断；GenerativeEvaluator 
 
 ## 3. 重点：恢复源码中的上下文、Hook 与 tool_use
 
-源码根目录：[claude-code-main](D:/PyChram_project/learn-claude-code-main/claude-code-main)。
+源码根目录：`claude-code-main`。
 
 | 阅读位置 | 实际观察 | 拟迁移到教学助手的约束 |
 | --- | --- | --- |
-| [context.ts:116](D:/PyChram_project/learn-claude-code-main/claude-code-main/src/context.ts:116)、[context.ts:155](D:/PyChram_project/learn-claude-code-main/claude-code-main/src/context.ts:155) | 分开组织系统上下文与用户上下文，缓存上下文资料 | 评分输入包固定题目、细则、材料和答案版本；权限与配置不由答案提供 |
-| [query.ts:365](D:/PyChram_project/learn-claude-code-main/claude-code-main/src/query.ts:365) | 在压缩边界后取消息，先处理工具结果预算，再处理历史裁剪和压缩 | 工具大结果存为产物引用；先限制上下文，再发请求 |
-| [microcompact.ts:253](D:/PyChram_project/learn-claude-code-main/claude-code-main/src/services/compact/microcompact.ts:253) | 根据时间、调用来源、模型能力和功能开关选择压缩路径 | 不照搬某一供应商的缓存编辑机制；按适配器能力处理 |
-| [autoCompact.ts:32](D:/PyChram_project/learn-claude-code-main/claude-code-main/src/services/compact/autoCompact.ts:32)、[autoCompact.ts:51](D:/PyChram_project/learn-claude-code-main/claude-code-main/src/services/compact/autoCompact.ts:51) | 预留输出空间，跟踪压缩失败次数并设置停止边界 | 预算包含输出与恢复开销；失败不能触发无限压缩/重试 |
-| [Tool.ts:379](D:/PyChram_project/learn-claude-code-main/claude-code-main/src/Tool.ts:379)、[Tool.ts:489](D:/PyChram_project/learn-claude-code-main/claude-code-main/src/Tool.ts:489) | 工具有 schema、执行接口、并发属性、业务校验和权限检查 | ToolSpec 分离描述、参数校验、授权、执行和回执 |
-| [toolExecution.ts:615](D:/PyChram_project/learn-claude-code-main/claude-code-main/src/services/tools/toolExecution.ts:615)、[toolExecution.ts:800](D:/PyChram_project/learn-claude-code-main/claude-code-main/src/services/tools/toolExecution.ts:800)、[toolExecution.ts:921](D:/PyChram_project/learn-claude-code-main/claude-code-main/src/services/tools/toolExecution.ts:921) | 可见 schema 校验、工具业务校验、PreToolUse、权限决策的执行路径 | 核心校验必须是程序代码；Hook 改写参数后在本项目中重新校验和授权 |
-| [toolHooks.ts:332](D:/PyChram_project/learn-claude-code-main/claude-code-main/src/services/tools/toolHooks.ts:332) | Hook 的 allow 仍受 deny/ask 规则约束 | 扩展 Hook 不得放宽课程权限或绕过老师确认 |
-| [hooksConfigSnapshot.ts:95](D:/PyChram_project/learn-claude-code-main/claude-code-main/src/utils/hooks/hooksConfigSnapshot.ts:95) | 捕获配置快照，有显式更新路径 | 每次执行固定 workflow/policy/hook 版本，恢复不悄悄更换 |
-| [toolOrchestration.ts:91](D:/PyChram_project/learn-claude-code-main/claude-code-main/src/services/tools/toolOrchestration.ts:91) | 按经过校验的输入和 `isConcurrencySafe` 组织工具批次 | 不把所有工具一律并行；同一成绩的写入必须事务串行化 |
-| [query.ts:1011](D:/PyChram_project/learn-claude-code-main/claude-code-main/src/query.ts:1011) | 中断时补全缺失的工具结果，维持调用与返回匹配 | 取消、超时、失败也是明确结果；工具调用不能无记录消失 |
-| [query.ts:1258](D:/PyChram_project/learn-claude-code-main/claude-code-main/src/query.ts:1258) | API 错误与 Stop Hook 的路径分离，避免错误—阻止结束—重试循环 | 模型停止与业务验收分离；停止检查受预算和最大修复次数约束 |
+| `context.ts:116`、`context.ts:155` | 分开组织系统上下文与用户上下文，缓存上下文资料 | 评分输入包固定题目、细则、材料和答案版本；权限与配置不由答案提供 |
+| `query.ts:365` | 在压缩边界后取消息，先处理工具结果预算，再处理历史裁剪和压缩 | 工具大结果存为产物引用；先限制上下文，再发请求 |
+| `microcompact.ts:253` | 根据时间、调用来源、模型能力和功能开关选择压缩路径 | 不照搬某一供应商的缓存编辑机制；按适配器能力处理 |
+| `autoCompact.ts:32`、`autoCompact.ts:51` | 预留输出空间，跟踪压缩失败次数并设置停止边界 | 预算包含输出与恢复开销；失败不能触发无限压缩/重试 |
+| `Tool.ts:379`、`Tool.ts:489` | 工具有 schema、执行接口、并发属性、业务校验和权限检查 | ToolSpec 分离描述、参数校验、授权、执行和回执 |
+| `toolExecution.ts:615`、`toolExecution.ts:800`、`toolExecution.ts:921` | 可见 schema 校验、工具业务校验、PreToolUse、权限决策的执行路径 | 核心校验必须是程序代码；Hook 改写参数后在本项目中重新校验和授权 |
+| `toolHooks.ts:332` | Hook 的 allow 仍受 deny/ask 规则约束 | 扩展 Hook 不得放宽课程权限或绕过老师确认 |
+| `hooksConfigSnapshot.ts:95` | 捕获配置快照，有显式更新路径 | 每次执行固定 workflow/policy/hook 版本，恢复不悄悄更换 |
+| `toolOrchestration.ts:91` | 按经过校验的输入和 `isConcurrencySafe` 组织工具批次 | 不把所有工具一律并行；同一成绩的写入必须事务串行化 |
+| `query.ts:1011` | 中断时补全缺失的工具结果，维持调用与返回匹配 | 取消、超时、失败也是明确结果；工具调用不能无记录消失 |
+| `query.ts:1258` | API 错误与 Stop Hook 的路径分离，避免错误—阻止结束—重试循环 | 模型停止与业务验收分离；停止检查受预算和最大修复次数约束 |
 
 这些是从所读分支中观察到的机制，不意味着所有功能开关都启用，也不证明此源码树可以独立构建。源码中的性能注释不作为本项目的测量结果。
 
@@ -87,16 +89,16 @@ JevScoreEvaluator 输出一个评分点的结构化判断；GenerativeEvaluator 
 
 ## 4. learn-claude-code 教学代码
 
-- [s02_tool_use/code.py:163](D:/PyChram_project/learn-claude-code-main/s02_tool_use/code.py:163)：读取 `tool_use`，按注册表分派，并带同一 `tool_use_id` 回传结果。适合理解协议，不能直接用该无限循环作为教学批改任务状态机。
-- [s04_hooks/code.py:224](D:/PyChram_project/learn-claude-code-main/s04_hooks/code.py:224)：通过 PreToolUse/PostToolUse/Stop 扩展循环。教学助手应把强制权限留在不可绕过的执行链，而不是仅靠可替换 Hook。
-- [s08_context_compact/code.py:5](D:/PyChram_project/learn-claude-code-main/s08_context_compact/code.py:5)：演示结果落盘、历史裁剪、压缩及超限恢复。可借鉴“摘要 + 原文引用”，不用于替代评分原文。
-- [s16_workflow_runtime/code.py:329](D:/PyChram_project/learn-claude-code-main/s16_workflow_runtime/code.py:329)：JSONL journal、语义键和恢复缓存实际存在；不是只有 README 设计。
-- [s16_workflow_runtime/code.py:379](D:/PyChram_project/learn-claude-code-main/s16_workflow_runtime/code.py:379)：有预算对象和调用限制。该本地 journal/锁方案不能直接提供 PostgreSQL 事务、跨 Worker 租约或业务幂等，需重新实现。
+- `s02_tool_use/code.py:163`：读取 `tool_use`，按注册表分派，并带同一 `tool_use_id` 回传结果。适合理解协议，不能直接用该无限循环作为教学批改任务状态机。
+- `s04_hooks/code.py:224`：通过 PreToolUse/PostToolUse/Stop 扩展循环。教学助手应把强制权限留在不可绕过的执行链，而不是仅靠可替换 Hook。
+- `s08_context_compact/code.py:5`：演示结果落盘、历史裁剪、压缩及超限恢复。可借鉴“摘要 + 原文引用”，不用于替代评分原文。
+- `s16_workflow_runtime/code.py:329`：JSONL journal、语义键和恢复缓存实际存在；不是只有 README 设计。
+- `s16_workflow_runtime/code.py:379`：有预算对象和调用限制。该本地 journal/锁方案不能直接提供 PostgreSQL 事务、跨 Worker 租约或业务幂等，需重新实现。
 
 ## 5. EchoMind 实际实现
 
-归档：[EchoMind ZIP](<C:/Users/xinyuxie/Downloads/EchoMind所有代码+详细文档+ 简历9_____.zip>)。
-下表路径相对于 ZIP 内的 `EchoMind所有代码+详细文档+简历/`，不是已解压到本工作区的文件。
+归档：`EchoMind ZIP`。
+下表路径相对于参考归档内的项目根目录，不依赖个人文件名或本机存放位置。
 
 | 归档内路径与行号 | 实际实现 | 借鉴或差距 |
 | --- | --- | --- |

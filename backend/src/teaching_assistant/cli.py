@@ -9,9 +9,9 @@ from pydantic import ValidationError
 from sqlalchemy import select
 from sqlalchemy.dialects.postgresql import insert
 
-from teaching_assistant.agent.worker import AgentWorker
 from teaching_assistant.db import Database, Teacher
 from teaching_assistant.domain import DomainError, text_digest
+from teaching_assistant.harness.pool import run_pool
 from teaching_assistant.profiles import ProfileRegistry
 from teaching_assistant.service import audit
 from teaching_assistant.settings import Settings
@@ -76,12 +76,13 @@ async def run(args) -> None:
             print(json.dumps(await bootstrap(db, settings, args.name), ensure_ascii=False))
         elif args.command == "rotate-token":
             print(json.dumps(await rotate_token(db, settings, args.name), ensure_ascii=False))
-        elif args.command in {"worker", "agent-worker"}:
-            worker = (
-                AgentWorker(db, settings)
-                if args.command == "agent-worker"
-                else Worker(db, settings)
-            )
+        elif args.command in {"agent-worker", "harness-worker"}:
+            mode = "once" if args.once else "drain" if args.drain else "forever"
+            processed = await run_pool(db, settings, concurrency=args.concurrency, mode=mode)
+            if mode != "forever":
+                print(json.dumps({"processed": processed, "concurrency": args.concurrency}))
+        elif args.command == "worker":
+            worker = Worker(db, settings)
             if args.once:
                 print(json.dumps({"processed": await worker.run_once()}))
             elif args.drain:
@@ -124,10 +125,19 @@ def main():
     mode = worker.add_mutually_exclusive_group()
     mode.add_argument("--once", action="store_true")
     mode.add_argument("--drain", action="store_true")
-    agent_worker = commands.add_parser("agent-worker", help="Run durable rubric-drafting agents")
+    agent_worker = commands.add_parser(
+        "harness-worker", aliases=["agent-worker"], help="Run registered durable Harness tasks"
+    )
     agent_mode = agent_worker.add_mutually_exclusive_group()
     agent_mode.add_argument("--once", action="store_true")
     agent_mode.add_argument("--drain", action="store_true")
+    agent_worker.add_argument(
+        "--concurrency",
+        type=int,
+        choices=range(1, 17),
+        default=1,
+        help="Independent Harness execution slots in this process (default: 1)",
+    )
     demo_parser = commands.add_parser(
         "demo", help="Run synthetic API → worker → review → export flow"
     )

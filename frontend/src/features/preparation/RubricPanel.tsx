@@ -13,12 +13,14 @@ import { PreparationSession, usePreparationState } from "./session";
 type Selection = { kind: "editor"; source?: { id: string; body: Rubric } }
   | { kind: "draft" | "version"; id: string };
 
-export function SavedRule({ api, store, selection, question, onSelected, onEdit }: {
+export function SavedRule({ api, store, selection, question, onSelected, onEdit, onRevise }: {
   api: ApiClient; store: PreparationSession; selection: { kind: "draft" | "version"; id: string };
   question: QuestionDetail; onSelected: (id: string) => void; onEdit: (source: { id: string; body: Rubric }) => void;
+  onRevise?: (id: string) => void;
 }) {
   const resource = useResource<DraftDetail | RubricDetail>(api, `/v1/rubric-${selection.kind === "draft" ? "drafts" : "versions"}/${selection.id}`);
   const write = useOperation(api, `prepare:confirm:${selection.id}`);
+  const agentCreation = useOperation(api, `prepare:agent:${question.id}`);
   const confirmation = usePreparationState<VersionReceipt | undefined>(store, `confirmed:${selection.id}`, () => undefined);
   useAccepted<VersionReceipt>(write, (receipt) => { confirmation.set(receipt, false); resource.refresh(); });
   const data = resource.data;
@@ -44,7 +46,9 @@ export function SavedRule({ api, store, selection, question, onSelected, onEdit 
     <div className="button-row">{frozenId
       ? <Button type="primary" onClick={() => onSelected(frozenId)}>使用这份固定细则，导入答案</Button>
       : <Button type="primary" disabled={write.locked} loading={write.phase === "sending"} onClick={() => void confirm()}>确认并固定评分细则</Button>}
-      <Button disabled={write.locked} onClick={() => onEdit({ id: data.id, body: data.body })}>以此起草新版本</Button></div>
+      <Button disabled={write.locked} onClick={() => onEdit({ id: data.id, body: data.body })}>以此起草新版本</Button>
+      {selection.kind === "draft" && onRevise && <Button disabled={write.locked || agentCreation.locked || Boolean(resource.error)}
+        onClick={() => onRevise(data.id)}>让 Agent 修改这份草稿</Button>}</div>
     <WriteFeedback state={write} retry={() => write.operation.retry()} />
   </section>;
 }
@@ -53,8 +57,9 @@ export function RubricPanel({ api, store, question, selectedId, onSelected }: {
   api: ApiClient; store: PreparationSession; question: QuestionDetail; selectedId?: string; onSelected: (id: string) => void;
 }) {
   const view = usePreparationState<Selection | undefined>(store, `rubric-view:${question.id}`, () => undefined);
+  const revisionSource = usePreparationState<string | undefined>(store, `agent-revision-source:${question.id}`, () => undefined);
   const [listTab, setListTab] = useState<"versions" | "drafts">("versions");
-  const [agentOpen, setAgentOpen] = useState(false);
+  const [agentOpen, setAgentOpen] = useState(() => Boolean(revisionSource.value));
   const versions = usePage<RubricRow>(api, `/v1/question-versions/${question.id}/rubric-versions`);
   const drafts = usePage<DraftRow>(api, `/v1/question-versions/${question.id}/rubric-drafts`);
   return <div className="prep-stack"><section className="panel prep-card">
@@ -63,7 +68,8 @@ export function RubricPanel({ api, store, question, selectedId, onSelected }: {
         <Button onClick={() => view.set({ kind: "editor" }, false)}>手动起草</Button>
         <Button onClick={() => setAgentOpen((open) => !open)}>{agentOpen ? "收起 Agent" : "用 Agent 起草"}</Button>
       </div></div>
-    {agentOpen && <AgentPanel api={api} store={store} question={question} onOpenDraft={(id) => {
+    {agentOpen && <AgentPanel api={api} store={store} question={question}
+      sourceDraftId={revisionSource.value} onClearSource={() => revisionSource.set(undefined, false)} onOpenDraft={(id) => {
       view.set({ kind: "draft", id }, false);
       drafts.first();
     }} />}
@@ -88,6 +94,7 @@ export function RubricPanel({ api, store, question, selectedId, onSelected }: {
       api={api} store={store} question={question} source={view.value.source}
       onSaved={(id) => { view.set({ kind: "draft", id }, false); drafts.first(); }} />}
     {view.value && view.value.kind !== "editor" && <SavedRule key={`${view.value.kind}:${view.value.id}`} api={api} store={store}
-      question={question} selection={view.value} onSelected={onSelected} onEdit={(source) => view.set({ kind: "editor", source }, false)} />}
+      question={question} selection={view.value} onSelected={onSelected} onEdit={(source) => view.set({ kind: "editor", source }, false)}
+      onRevise={(id) => { revisionSource.set(id, false); setAgentOpen(true); }} />}
   </div>;
 }

@@ -4,7 +4,7 @@ import { createRoot } from "react-dom/client";
 import type { Root } from "react-dom/client";
 import { afterEach, beforeEach, expect, it, vi } from "vitest";
 import { ApiClient } from "../../api/client";
-import type { AgentRun, QuestionDetail } from "../../api/types";
+import type { AgentRun, DraftDetail, QuestionDetail } from "../../api/types";
 import { AgentPanel } from "./AgentPanel";
 import { PreparationSession } from "./session";
 
@@ -55,7 +55,7 @@ const response = (value: unknown) => new Response(JSON.stringify(value), {
 });
 const page = (items: AgentRun[]) => ({ items, total: items.length, limit: 20, has_more: false, next_cursor: null });
 
-function serve(list: () => AgentRun[], post?: (options: RequestInit) => Response) {
+function serve(list: () => AgentRun[], post?: (options: RequestInit) => Response, drafts: DraftDetail[] = []) {
   const fetch = vi.fn(async (path: string, options?: RequestInit) => {
     const url = new URL(path, window.location.origin);
     if (options?.method === "POST") {
@@ -77,15 +77,18 @@ function serve(list: () => AgentRun[], post?: (options: RequestInit) => Response
     if (url.pathname === "/v1/agent-runs/saved-run") return response(record);
     const saved = list().find((item) => url.pathname === `/v1/agent-runs/${item.id}`);
     if (saved) return response(saved);
+    const draft = drafts.find((item) => url.pathname === `/v1/rubric-drafts/${item.id}`);
+    if (draft) return response(draft);
     throw new Error(`Unexpected read: ${path}`);
   });
   vi.stubGlobal("fetch", fetch);
   return fetch;
 }
 
-async function render(api: ApiClient, store = new PreparationSession(), onOpenDraft = vi.fn()) {
+async function render(api: ApiClient, store = new PreparationSession(), onOpenDraft = vi.fn(),
+  source: { sourceDraftId?: string; onClearSource?: () => void } = {}) {
   await act(async () => {
-    root.render(createElement(AgentPanel, { api, store, question: { id: "question-1" } as QuestionDetail, onOpenDraft }));
+    root.render(createElement(AgentPanel, { api, store, question: { id: "question-1" } as QuestionDetail, onOpenDraft, ...source }));
   });
 }
 
@@ -240,4 +243,244 @@ it("restores an earlier waiting task instead of a newer cancelled one", async ()
   serve(() => [cancelled, waiting]);
   await render(new ApiClient("test"));
   expect((container.querySelector("#agent-history-question-1") as HTMLSelectElement).value).toBe("waiting-run");
+});
+
+it.each(["waiting_input", "waiting_timer"] as const)("restores and explains a %s task and allows cancellation", async (status) => {
+  let paused: AgentRun = { ...record, id: "paused-run", status, draft_id: null, waiting_for: null,
+    wait: { token: "wait-token", root_run_id: "paused-run", reason: "等待课堂资料",
+      wake_at: status === "waiting_timer" ? "2026-10-22T04:00:00Z" : null } };
+  const ended: AgentRun = { ...record, id: "ended-run", status: "cancelled", draft_id: null };
+  const fetch = serve(() => [ended, paused], () => {
+    paused = { ...paused, status: "cancelled", wait: null };
+    return response(paused);
+  });
+  await render(new ApiClient("test"));
+  expect((container.querySelector("#agent-history-question-1") as HTMLSelectElement).value).toBe("paused-run");
+  expect(container.textContent).toContain(status === "waiting_input" ? "等待补充信息后恢复" : "等待预约时间恢复");
+  expect(container.textContent).toContain("暂停期间不消耗执行时限");
+  expect(container.textContent).toContain("暂停原因：等待课堂资料");
+  if (status === "waiting_timer") expect(container.textContent).toContain("预约恢复时间");
+  expect(button("开始起草").disabled).toBe(true);
+  expect(button("取消任务").disabled).toBe(false);
+  await act(async () => button("取消任务").click());
+  const writes = fetch.mock.calls.filter(([, options]) => options?.method === "POST");
+  expect(writes).toHaveLength(1);
+  expect(writes[0][0]).toBe("/v1/agent-runs/paused-run/cancel");
+  expect(container.textContent).not.toContain("暂停原因：等待课堂资料");
+  expect(button("开始起草").disabled).toBe(false);
+  expect([...container.querySelectorAll("button")].some((node) => node.textContent === "取消任务")).toBe(false);
+});
+
+const manualDraft: DraftDetail = {
+  id: "manual-draft", question_version_id: "question-1", revision: 1,
+  confirmed_version_id: null, created_at: record.created_at,
+  body: { global_instructions: "老师编写的规则", selection_policy: "unique-argmax-v1", rounding_policy: "total-half-up-2dp-v1",
+    criteria: [{ id: "point", description: "说明原因", semantic_version: 1, maximum_points: "5.00", levels: [
+      { id: "low", ordinal: 0, description: "没有解释", points: "0.00" },
+      { id: "full", ordinal: 1, description: "完整解释", points: "5.00" },
+    ] }],
+  },
+};
+
+it("revises a saved manual draft without any earlier agent task and adopts its result", async () => {
+  let created = false;
+  const child = { ...revision, source_draft: { ...revision.source_draft!, id: manualDraft.id } };
+  const fetch = serve(() => created ? [child] : [], () => { created = true; return response(child); }, [manualDraft]);
+  const clear = vi.fn();
+  const open = vi.fn();
+  await render(new ApiClient("test"), new PreparationSession(), open, { sourceDraftId: manualDraft.id, onClearSource: clear });
+  expect(container.textContent).toContain("对所选草稿的修改意见");
+  expect(container.textContent).toContain("1 个评分点 · 未确认");
+  expect(button("按修改意见生成新版").disabled).toBe(true);
+  await act(async () => button("查看所选草稿").click());
+  expect(open).toHaveBeenCalledWith(manualDraft.id);
+  expect(fetch.mock.calls.every(([, options]) => options?.method !== "POST")).toBe(true);
+  await fillFeedback("  明确部分得分  ");
+  await act(async () => button("按修改意见生成新版").click());
+  const writes = fetch.mock.calls.filter(([, options]) => options?.method === "POST");
+  expect(writes).toHaveLength(1);
+  expect(JSON.parse(writes[0][1]?.body as string)).toEqual({
+    agent_profile: "fake-rubric-agent-v1", source_draft_id: manualDraft.id, instructions: "明确部分得分",
+  });
+  expect(clear).toHaveBeenCalledOnce();
+  expect((container.querySelector("#agent-history-question-1") as HTMLSelectElement).value).toBe(child.id);
+});
+
+it("keeps the selected draft and its feedback independent of the restored task and other drafts", async () => {
+  const other = { ...manualDraft, id: "other-draft", confirmed_version_id: "fixed-version" };
+  const fetch = serve(() => [record], undefined, [manualDraft, other]);
+  const api = new ApiClient("test");
+  const store = new PreparationSession();
+  const clear = vi.fn();
+  const open = vi.fn();
+  await render(api, store, open, { sourceDraftId: manualDraft.id, onClearSource: clear });
+  await fillFeedback("对手动草稿的意见");
+  await render(api, store, open, { sourceDraftId: other.id, onClearSource: clear });
+  expect((container.querySelector("#agent-feedback-question-1") as HTMLTextAreaElement).value).toBe("");
+  expect(container.textContent).toContain("1 个评分点 · 已确认");
+  await fillFeedback("对另一份草稿的意见");
+  await render(api, store, open, { sourceDraftId: manualDraft.id, onClearSource: clear });
+  expect((container.querySelector("#agent-feedback-question-1") as HTMLTextAreaElement).value).toBe("对手动草稿的意见");
+  await act(async () => button("取消草稿选择").click());
+  expect(clear).toHaveBeenCalledOnce();
+  expect(fetch.mock.calls.every(([, options]) => options?.method !== "POST")).toBe(true);
+  await render(api, store, open);
+  expect(container.textContent).toContain("对当前草稿的修改意见");
+  expect((container.querySelector("#agent-feedback-question-1") as HTMLTextAreaElement).value).toBe("");
+});
+
+it("locks a manual source after a lost response and retries exactly the same revision", async () => {
+  let writes = 0;
+  const child = { ...revision, source_draft: { ...revision.source_draft!, id: manualDraft.id } };
+  const fetch = serve(() => writes ? [child, record] : [record], () => {
+    if (++writes === 1) throw new TypeError("response lost after commit");
+    return response(child);
+  }, [manualDraft]);
+  const clear = vi.fn();
+  await render(new ApiClient("test"), new PreparationSession(), vi.fn(), { sourceDraftId: manualDraft.id, onClearSource: clear });
+  await fillFeedback("明确部分得分");
+  await act(async () => button("按修改意见生成新版").click());
+  expect(button("取消草稿选择").disabled).toBe(true);
+  expect(button("查看所选草稿").disabled).toBe(true);
+  expect(button("开始起草").disabled).toBe(true);
+  expect((container.querySelector("#agent-feedback-question-1") as HTMLTextAreaElement).disabled).toBe(true);
+  expect(clear).not.toHaveBeenCalled();
+  await act(async () => button("重试同一次提交").click());
+  const posted = fetch.mock.calls.filter(([, options]) => options?.method === "POST");
+  expect(posted).toHaveLength(2);
+  expect(JSON.parse(posted[0][1]?.body as string).source_draft_id).toBe(manualDraft.id);
+  expect(posted[1][1]?.body).toBe(posted[0][1]?.body);
+  expect(new Headers(posted[1][1]?.headers).get("Idempotency-Key"))
+    .toBe(new Headers(posted[0][1]?.headers).get("Idempotency-Key"));
+  expect(clear).toHaveBeenCalledOnce();
+});
+
+it("does not clear a newly selected source when remounting with an already adopted receipt", async () => {
+  serve(() => [revision, record], () => response(revision), [manualDraft]);
+  const api = new ApiClient("test");
+  const operation = api.operation("prepare:agent:question-1");
+  await operation.run("/v1/question-versions/question-1/rubric-agent-runs", {
+    source_draft_id: record.draft_id, instructions: "旧的意见",
+  });
+  const store = new PreparationSession();
+  store.set("agent:question-1", { runId: revision.id, acceptedCreation: operation.snapshot().ticket!.key }, false);
+  const clear = vi.fn();
+  await render(api, store, vi.fn(), { sourceDraftId: manualDraft.id, onClearSource: clear });
+  expect(container.textContent).toContain("对所选草稿的修改意见");
+  expect(clear).not.toHaveBeenCalled();
+  await fillFeedback("新来源的意见");
+  expect(button("按修改意见生成新版").disabled).toBe(false);
+});
+
+it.each(["unreadable", "wrong-question"])("blocks revision of an %s source without sending a write", async (problem) => {
+  const fetch = serve(() => [record], undefined, [{ ...manualDraft, question_version_id: "another-question" }]);
+  if (problem === "unreadable") {
+    const original = fetch.getMockImplementation()!;
+    fetch.mockImplementation((path, options) => path === `/v1/rubric-drafts/${manualDraft.id}`
+      ? Promise.resolve(new Response(JSON.stringify({ code: "not_found" }), { status: 404 })) : original(path, options));
+  }
+  await render(new ApiClient("test"), new PreparationSession(), vi.fn(), { sourceDraftId: manualDraft.id });
+  expect(button("按修改意见生成新版").disabled).toBe(true);
+  expect(button("查看所选草稿").disabled).toBe(true);
+  expect((container.querySelector("#agent-feedback-question-1") as HTMLTextAreaElement).disabled).toBe(true);
+  expect(container.textContent).toContain(problem === "unreadable" ? "记录不存在" : "不属于当前题目版本");
+  expect(fetch.mock.calls.every(([, options]) => options?.method !== "POST")).toBe(true);
+});
+
+const questionWait: AgentRun = {
+  ...record, id: "question-run", status: "waiting_input", draft_id: null,
+  wait: { token: "question-token-1", root_run_id: "question-run", reason: "需要课堂信息", wake_at: null,
+    question: { tool_call_id: "ask-1", prompt: "学生是否已经学习过分数？", options: ["学过", "未学过"] } },
+};
+
+async function fillAnswer(value: string) {
+  await act(async () => {
+    const input = container.querySelector("#agent-answer-question-1") as HTMLTextAreaElement;
+    input.value = value;
+    input.dispatchEvent(new Event("input", { bubbles: true }));
+  });
+}
+
+it("shows the saved question, allows suggested or free answers, and wakes with the exact response", async () => {
+  let current = questionWait;
+  const fetch = serve(() => [current], () => {
+    current = { ...current, status: "queued", wait: null };
+    return response(current);
+  });
+  await render(new ApiClient("question-token"));
+  expect(container.textContent).toContain("学生是否已经学习过分数？");
+  expect(button("提交回答并继续").disabled).toBe(true);
+  await act(async () => button("学过").click());
+  expect((container.querySelector("#agent-answer-question-1") as HTMLTextAreaElement).value).toBe("学过");
+  expect(fetch.mock.calls.every(([, options]) => options?.method !== "POST")).toBe(true);
+  await fillAnswer("  \n ");
+  expect(button("提交回答并继续").disabled).toBe(true);
+  await fillAnswer("  学过，但请先复习。  ");
+  await act(async () => button("提交回答并继续").click());
+  const writes = fetch.mock.calls.filter(([, options]) => options?.method === "POST");
+  expect(writes).toHaveLength(1);
+  expect(writes[0][0]).toBe("/v1/agent-runs/question-run/wake");
+  expect(JSON.parse(writes[0][1]?.body as string)).toEqual({
+    wait_token: "question-token-1", response: "  学过，但请先复习。  ",
+  });
+  expect(new Headers(writes[0][1]?.headers).get("Authorization")).toBe("Bearer question-token");
+  expect(new Headers(writes[0][1]?.headers).get("Idempotency-Key")).toBeTruthy();
+  expect(container.querySelector("#agent-answer-question-1")).toBeNull();
+  expect(container.textContent).toContain("排队中");
+});
+
+it("keeps an uncertain answer retry available after refresh observes the resumed task", async () => {
+  let current = questionWait;
+  let writes = 0;
+  const fetch = serve(() => [current], () => {
+    current = { ...current, status: "queued", wait: null };
+    if (++writes === 1) throw new TypeError("answer committed but response lost");
+    return response(current);
+  });
+  await render(new ApiClient("test"));
+  await fillAnswer("未学过，请从具体例子开始。");
+  await act(async () => button("提交回答并继续").click());
+  expect((container.querySelector("#agent-answer-question-1") as HTMLTextAreaElement).disabled).toBe(true);
+  expect(button("取消任务").disabled).toBe(true);
+  await act(async () => button("刷新状态").click());
+  expect(container.querySelector("#agent-answer-question-1")).toBeNull();
+  expect(button("重试同一次提交")).toBeDefined();
+  await act(async () => button("重试同一次提交").click());
+  const posted = fetch.mock.calls.filter(([, options]) => options?.method === "POST");
+  expect(posted).toHaveLength(2);
+  expect(posted[1][1]?.body).toBe(posted[0][1]?.body);
+  expect(new Headers(posted[1][1]?.headers).get("Idempotency-Key"))
+    .toBe(new Headers(posted[0][1]?.headers).get("Idempotency-Key"));
+  expect(button("取消任务").disabled).toBe(false);
+});
+
+it("isolates answer drafts by wait token and supports questions without suggested options", async () => {
+  let current = questionWait;
+  const fetch = serve(() => [current]);
+  await render(new ApiClient("test"));
+  await fillAnswer("前一个问题的草稿");
+  current = { ...questionWait, wait: { ...questionWait.wait!, token: "question-token-2",
+    question: { tool_call_id: "ask-2", prompt: "需要准备哪些材料？", options: null } } };
+  await act(async () => button("刷新状态").click());
+  expect(container.textContent).toContain("需要准备哪些材料？");
+  expect(container.textContent).not.toContain("学生是否已经学习过分数？");
+  expect((container.querySelector("#agent-answer-question-1") as HTMLTextAreaElement).value).toBe("");
+  expect(button("提交回答并继续").disabled).toBe(true);
+  expect([...container.querySelectorAll("button")].some((item) => item.textContent === "学过")).toBe(false);
+  expect(fetch.mock.calls.every(([, options]) => options?.method !== "POST")).toBe(true);
+});
+
+it("refreshes a resolved wait after a stale answer is rejected and does not submit again", async () => {
+  let current = questionWait;
+  const fetch = serve(() => [current], () => {
+    current = { ...current, status: "cancelled", wait: null };
+    return new Response(JSON.stringify({ code: "agent_wait_already_resolved" }), { status: 409 });
+  });
+  await render(new ApiClient("test"));
+  await fillAnswer("迟到的回答");
+  await act(async () => button("提交回答并继续").click());
+  expect(container.textContent).toContain("这次等待已经被回答或取消");
+  expect(container.textContent).toContain("已取消");
+  expect(container.querySelector("#agent-answer-question-1")).toBeNull();
+  expect(fetch.mock.calls.filter(([, options]) => options?.method === "POST")).toHaveLength(1);
 });

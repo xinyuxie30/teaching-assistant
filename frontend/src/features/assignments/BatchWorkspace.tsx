@@ -6,11 +6,13 @@ import { usePage, useResource } from "../../api/hooks";
 import type { BatchDetail, ItemRow } from "../../api/types";
 import { dateTime, EmptyState, ErrorNotice, Loading, Pager, score, StatusTag } from "../../components/common";
 import { ExportPanel } from "../exports/ExportPanel";
+import { AnalysisPanel } from "../analysis/AnalysisPanel";
 
-export function BatchWorkspace({ api, batchId, onBack, onReview }: {
-  api: ApiClient; batchId: string; onBack: () => void; onReview: (id: string) => void;
+export function BatchWorkspace({ api, batchId, onBack, onReview, initialTab = "answers" }: {
+  api: ApiClient; batchId: string; onBack: () => void; onReview: (id: string, tab?: string) => void;
+  initialTab?: string;
 }) {
-  const [tab, setTab] = useState("answers");
+  const [tab, setTab] = useState(initialTab);
   const [filter, setFilter] = useState("ready");
   const batch = useResource<BatchDetail>(api, `/v1/grading-batches/${batchId}`, {}, (data) => data.status !== "settled");
   const filters = {
@@ -60,10 +62,11 @@ export function BatchWorkspace({ api, batchId, onBack, onReview }: {
     </div>
     <div className="section-toolbar">
       <Segmented value={tab} onChange={(value) => setTab(String(value))}
-        options={[{ value: "answers", label: "答案与复核" }, { value: "exports", label: "导出快照" }]} />
+        options={[{ value: "answers", label: "答案与复核" }, { value: "analysis", label: "班级学情" }, { value: "exports", label: "导出快照" }]} />
       <span className="muted small">批次 {batchId.slice(0, 8)}</span>
     </div>
-    {tab === "exports" ? <ExportPanel api={api} batch={data} /> : <section className="panel">
+    {tab === "analysis" ? <AnalysisPanel api={api} batchId={batchId} onReview={(id) => onReview(id, "analysis")} />
+      : tab === "exports" ? <ExportPanel api={api} batch={data} /> : <section className="panel">
       <div className="panel-toolbar">
         <Select aria-label="答案筛选" value={filter} onChange={setFilter} className="answer-filter"
           options={[{ value: "ready", label: "待老师复核" }, { value: "all", label: "全部答案" },

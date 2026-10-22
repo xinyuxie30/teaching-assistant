@@ -1,4 +1,5 @@
 import re
+from decimal import Decimal
 from typing import Literal
 from urllib.parse import urlsplit
 
@@ -31,13 +32,51 @@ class Settings(BaseSettings):
     deepseek_evidence_mode: Literal["manual", "model"] = "manual"
     deepseek_max_input_characters: int = Field(default=40000, ge=1000, le=200000)
     deepseek_max_output_tokens: int = Field(default=2048, ge=128, le=8192)
+    # These settings are pinned only by new Harness budget policies. Older
+    # grading and Harness manifests deliberately retain their original shape.
+    deepseek_context_window_tokens: int | None = Field(default=None, ge=1024, le=10000000)
+    deepseek_input_usd_per_million: Decimal | None = Field(
+        default=None, ge=0, le=100000, allow_inf_nan=False
+    )
+    deepseek_output_usd_per_million: Decimal | None = Field(
+        default=None, ge=0, le=100000, allow_inf_nan=False
+    )
+    deepseek_cached_input_usd_per_million: Decimal | None = Field(
+        default=None, ge=0, le=100000, allow_inf_nan=False
+    )
+    deepseek_price_version: str | None = Field(default=None, min_length=1, max_length=120)
+    deepseek_price_source: str | None = Field(default=None, min_length=1, max_length=2000)
     call_timeout_seconds: float = Field(default=10, gt=0, le=60)
     lease_seconds: int = Field(default=30, ge=5, le=300)
     poll_seconds: float = Field(default=1, gt=0)
+    harness_hook_id: str = "deny-tools"
+    harness_hook_config: dict = Field(default_factory=dict)
     retry_delay_seconds: int = Field(default=2, ge=0, le=3600)
 
     @model_validator(mode="after")
     def validate_runtime(self):
+        prices = (self.deepseek_input_usd_per_million, self.deepseek_output_usd_per_million)
+        pricing_configured = any(price is not None for price in prices)
+        if pricing_configured and (
+            any(price is None for price in prices)
+            or not self.deepseek_price_version
+            or not self.deepseek_price_source
+        ):
+            raise ValueError("Harness prices require both input/output rates, version and source")
+        if not pricing_configured and any(
+            value is not None
+            for value in (
+                self.deepseek_cached_input_usd_per_million,
+                self.deepseek_price_version,
+                self.deepseek_price_source,
+            )
+        ):
+            raise ValueError("Harness price metadata requires input/output rates")
+        if (
+            self.deepseek_cached_input_usd_per_million is not None
+            and self.deepseek_cached_input_usd_per_million > self.deepseek_input_usd_per_million
+        ):
+            raise ValueError("Cached input price cannot exceed the uncached reservation rate")
         if not self.database_url.startswith("postgresql+asyncpg://"):
             raise ValueError("Only PostgreSQL with asyncpg is supported")
         if self.lease_seconds <= self.call_timeout_seconds + 2:

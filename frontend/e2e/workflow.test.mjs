@@ -20,7 +20,7 @@ const CSV_COLUMNS = [
   "evaluation_profile", "simulation",
 ];
 
-test("one synthetic assignment: preparation, fake evaluation, review and both export scopes", { timeout: 240_000 }, async (t) => {
+test("one synthetic assignment: preparation, evaluation, review, exports and class analysis", { timeout: 240_000 }, async (t) => {
   const config = configuration();
   const runId = `workflow-${randomUUID()}`;
   const assignmentTitle = `回归作业-${runId}`;
@@ -198,6 +198,61 @@ test("one synthetic assignment: preparation, fake evaluation, review and both ex
     const { body: draft } = await post(`/v1/question-versions/${question.id}/rubric-drafts`, () => click("保存草稿，准备确认"));
     assert.equal(draft.rubric.criteria.length, 2);
     await click("查看并确认这份草稿");
+    // A manual draft has no originating Agent task. Select it directly from its detail page,
+    // even though the panel still remembers an unrelated task for this same question.
+    const manualSource = await get(`/v1/rubric-drafts/${draft.id}`);
+    assert.equal(manualSource.confirmed_version_id, null);
+    const manualFeedback = "请基于这份手动草稿说明规则适用范围。此条仅验收来源选择及差异展示。";
+    await click("让 Agent 修改这份草稿");
+    await fill("对所选草稿的修改意见", manualFeedback);
+    const manualRevision = await post(`/v1/question-versions/${question.id}/rubric-agent-runs`, () => click("按修改意见生成新版"));
+    assert.equal(manualRevision.sent.source_draft_id, draft.id);
+    assert.equal(manualRevision.sent.instructions, manualFeedback);
+    let manualRun;
+    await eventually("manual-source revision waits for the teacher", async () => {
+      manualRun = await get(`/v1/agent-runs/${manualRevision.body.id}`);
+      assert.equal(manualRun.status, "waiting_teacher");
+      assert.equal(manualRun.source_draft.id, draft.id);
+      assert.notEqual(manualRun.draft_id, draft.id);
+    }, 60_000);
+    await page.getByText(`修改意见：${manualFeedback}`, { exact: true }).waitFor();
+    assert.equal(await page.getByLabel("对所选草稿的修改意见", { exact: true }).count(), 0,
+      "a successful creation must release the explicitly selected source");
+    await click("打开草稿并确认");
+    await comparison.waitFor();
+    const changedDraft = await get(`/v1/rubric-drafts/${manualRun.draft_id}`);
+    assert.deepEqual(changedDraft.revision_comparison.source_body, manualSource.body);
+    assert.deepEqual(changedDraft.revision_comparison.difference.summary,
+      { added: 1, removed: 2, modified: 0, unchanged: 0 });
+    const changedText = await comparison.textContent();
+    assert(changedText.includes(manualFeedback));
+    assert(changedText.includes("新增 1 个评分点") && changedText.includes("移除 2 个评分点"));
+    assert(!changedText.includes("新版与原稿内容一致"));
+    assert.equal(await comparison.locator('[aria-label="新增评分点"]').count(), 1);
+    assert.equal(await comparison.locator('[aria-label="移除评分点"]').count(), 2);
+    for (const criterion of manualSource.body.criteria) assert(changedText.includes(criterion.description));
+    for (const criterion of changedDraft.body.criteria) assert(changedText.includes(criterion.description));
+    await comparison.screenshot({ path: join(directory, "rubric-comparison.png") });
+    await page.setViewportSize({ width: 390, height: 844 });
+    await comparison.screenshot({ path: join(directory, "rubric-comparison-mobile.png") });
+    assert(await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth),
+      "changed rubric comparison must fit a narrow screen");
+    await page.setViewportSize({ width: 1440, height: 1000 });
+    assert.deepEqual(await get(`/v1/rubric-drafts/${draft.id}`), manualSource);
+    assert.equal(changedDraft.confirmed_version_id, null);
+    report.ids.manualRevisionRun = manualRun.id;
+    report.ids.manualRevisionDraft = manualRun.draft_id;
+    report.ids.manualSourceDraft = draft.id;
+    checkpoint("A manual draft can be revised directly; added/removed points display on desktop and mobile without changing the source");
+    // Keep using the teacher's two-criterion source for grading; the generated draft remains unconfirmed.
+    await click("查看来源草稿");
+    await eventually("the source draft is displayed before confirmation", async () => {
+      assert.equal(await comparison.count(), 0);
+      const headings = await page.locator(".rubric-document .rubric-point h3").allTextContents();
+      assert.equal(headings.length, manualSource.body.criteria.length);
+      manualSource.body.criteria.forEach((criterion, index) =>
+        assert(headings[index].startsWith(`${index + 1}. ${criterion.description}`)));
+    });
     const { body: rubric } = await post(`/v1/rubric-drafts/${draft.id}/confirm`, () => click("确认并固定评分细则"));
     // Version 1 was the agent draft confirmed above; the manual rubric is version 2.
     assert.equal(rubric.version, 2);
@@ -254,7 +309,13 @@ test("one synthetic assignment: preparation, fake evaluation, review and both ex
         .filter({ hasText: process.env.TA_E2E_PROFILE_LABEL || "jev-" }).first().click();
     }
     await click("检查批次并创建");
-    const { body: batch, sent: batchInput } = await post("/v1/grading-batches", () => page.getByRole("dialog").getByRole("button", { name: "创建批次", exact: true }).click());
+    const { body: batch, sent: batchInput } = await post("/v1/grading-batches", async () => {
+      const confirm = page.getByRole("dialog").getByRole("button", { name: "创建批次", exact: true });
+      // The opening modal can move while its layout settles. Activate its focused
+      // native button once instead of relying on a coordinate during that motion.
+      await confirm.focus();
+      await confirm.press("Enter");
+    });
     assert.deepEqual([...batchInput.answer_version_ids].sort(), [...selectedAnswers].sort());
     assert.equal(batchInput.rubric_version_id, rubric.id);
     assert.equal(batchInput.evaluation_profile, PROFILE);
@@ -406,6 +467,66 @@ test("one synthetic assignment: preparation, fake evaluation, review and both ex
       report.ids[`${mode}Export`] = exported.id;
       checkpoint(`${mode}: asserted snapshot scope, exact JSON and every CSV field from actual UI downloads`);
     }
+    await page.getByText("班级学情", { exact: true }).click();
+    await page.getByRole("heading", { name: "班级学情分析", exact: true }).waitFor();
+    const analysisPath = `/v1/grading-batches/${batch.id}/analysis`;
+    const initialAnalysis = await get(analysisPath);
+    assert.equal(initialAnalysis.scope.question_version_id, question.id);
+    assert.equal(initialAnalysis.scope.rubric_version_id, rubric.id);
+    assert.equal(initialAnalysis.coverage.confirmed, 1);
+    assert.equal(initialAnalysis.coverage.pending_review, 1);
+    assert.equal(initialAnalysis.coverage.simulated_confirmed, SIMULATION ? 1 : 0);
+    assert.equal(initialAnalysis.scores.average_score, "10.00");
+    await eventually("analysis displays confirmed scores and excludes the pending student", async () => {
+      assert.match(await page.locator(".analysis-metrics").textContent(), /确认均分10\.00/);
+      assert.equal(await page.locator(".analysis-stack tr.ant-table-row").count(), 1);
+      assert(await page.locator(`.analysis-stack tr[data-row-key="${primary.id}"]`).isVisible());
+    });
+    // Change a teacher review through the drilldown, then return to a refreshed report.
+    await click("查看原答案");
+    await page.locator(`#reason-${criteria[0].id}`).waitFor();
+    await page.locator(".criterion-panel").nth(0).getByRole("radio", { name: /0\.00 分/ }).check();
+    const analysisReason = "合成讲评线索：当前答案未说明统一评估的作用。";
+    await page.locator(`#reason-${criteria[0].id}`).fill(analysisReason);
+    const { body: changedReview } = await post(`/v1/grading-items/${primary.id}/reviews`, () => click("确认全部评分点"));
+    assert.equal(changedReview.revision, 2);
+    assert.equal(changedReview.confirmed_score, "4.00");
+    await page.getByText("已保存 2 次复核", { exact: true }).waitFor();
+    await click("← 返回答案列表");
+    await page.getByRole("heading", { name: "班级学情分析", exact: true }).waitFor();
+    await eventually("return from review recalculates from the latest confirmed revision", async () => {
+      assert.match(await page.locator(".analysis-metrics").textContent(), /确认均分4\.00/);
+    });
+    const revisedAnalysis = await get(analysisPath);
+    assert.equal(revisedAnalysis.scores.average_score, "4.00");
+    assert.equal(revisedAnalysis.coverage.confirmed, 1);
+    assert.notEqual(revisedAnalysis.basis_hash, initialAnalysis.basis_hash);
+    assert.equal(revisedAnalysis.criteria[0].id, criteria[0].id);
+    assert.equal(revisedAnalysis.criteria[0].below_full_credit_students, 1);
+    const point = page.locator(".analysis-criterion").filter({ hasText: criteria[0].description });
+    await point.getByRole("button", { name: "查看本项未得满分答案", exact: true }).click();
+    await page.locator(`tr[data-row-key="${primary.id}"]`).getByText(analysisReason, { exact: true }).waitFor();
+    assert.match(await page.locator(`tr[data-row-key="${primary.id}"]`).textContent(), /第 2 次/);
+    const olderExport = await get(`/v1/exports/${report.ids.confirmed_onlyExport}`);
+    assert.equal(olderExport.snapshot.rows[0].confirmed_score, "10.00", "Review changes must not rewrite older exports");
+    assert.equal(olderExport.snapshot.rows[0].review_revision, 1);
+    await eventually("review notices dismiss before capturing the analysis", async () => {
+      assert.equal(await page.locator(".ant-message-notice").count(), 0);
+    });
+    await page.evaluate(() => window.scrollTo({ top: 0, behavior: "instant" }));
+    await page.screenshot({ path: join(directory, "class-analysis.png"), fullPage: true });
+    await page.setViewportSize({ width: 390, height: 844 });
+    await page.evaluate(() => window.scrollTo({ top: 0, behavior: "instant" }));
+    assert(await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth), "Analysis must fit the mobile viewport");
+    await page.screenshot({ path: join(directory, "class-analysis-mobile.png"), fullPage: true });
+    await page.setViewportSize({ width: 1440, height: 1000 });
+    await click("清除评分点筛选");
+    await page.getByLabel("分析答案范围", { exact: true }).click();
+    await page.locator(".ant-select-dropdown:visible .ant-select-item-option-content").filter({ hasText: "待老师复核" }).click();
+    await page.locator(`.analysis-stack tr[data-row-key="${blank.id}"]`).waitFor();
+    assert.equal(await page.locator(".analysis-stack tr.ant-table-row").count(), 1);
+    assert.match(await page.locator(".analysis-metrics").textContent(), /确认均分4\.00/, "Changing the drilldown does not change the report denominator");
+    checkpoint("Class analysis: fixed versions, confirmed-only counts, revised review, criterion drilldown, pending filter and mobile layout");
     assert.deepEqual(browserErrors, [], "Browser errors or duplicate row keys must fail the regression");
     await page.screenshot({ path: join(directory, "completed.png"), fullPage: true });
     report.status = "passed";

@@ -16,6 +16,7 @@ from teaching_assistant.api import create_app
 from teaching_assistant.cli import bootstrap
 from teaching_assistant.db import AgentEvent, AgentRun, RubricDraft, RubricVersion
 from teaching_assistant.domain import DomainError, ModelError, ModelMetadata
+from test_harness_core import start_with_legacy_hooks
 
 pytestmark = pytest.mark.postgres
 
@@ -188,7 +189,7 @@ async def test_stop_repair_is_bounded(db, settings, client, scenario, monkeypatc
             return True
 
     monkeypatch.setattr("teaching_assistant.agent.worker.build_model", lambda *_: NoArtifact())
-    run = await start(client, scenario)
+    run = await start_with_legacy_hooks(client, scenario, settings)
     await AgentWorker(db, settings, run_ids=(UUID(run["id"]),), hooks=PermissiveStop()).run_once()
     saved = (await client.get(f"/v1/agent-runs/{run['id']}")).json()
     assert saved["error_code"] == "agent_missing_draft" and saved["models_used"] == 2
@@ -214,10 +215,18 @@ async def test_deny_hook_cannot_be_bypassed(db, settings, client, scenario):
         def pre_tool(self, name, context):
             return "draft_disabled" if name == "propose_rubric" else super().pre_tool(name, context)
 
-    run = await start(client, scenario, max_model_calls=3)
+    run = await start_with_legacy_hooks(client, scenario, settings, max_model_calls=3)
     await AgentWorker(db, settings, run_ids=(UUID(run["id"]),), hooks=DenyDraft()).run_once()
     saved = (await client.get(f"/v1/agent-runs/{run['id']}")).json()
     assert saved["status"] == "failed" and saved["draft_id"] is None
+    assert saved["models_used"] == saved["tools_used"] == 3
+    events = (await client.get(f"/v1/agent-runs/{run['id']}/events")).json()["items"]
+    denied = [
+        event["body"]["output"]
+        for event in events
+        if event["kind"] == "post_tool" and event["body"]["name"] == "propose_rubric"
+    ]
+    assert len(denied) == 2 and all(item["error_code"] == "draft_disabled" for item in denied)
     async with db.sessions() as session:
         assert await session.scalar(select(func.count()).select_from(RubricDraft)) == 1
         assert await session.scalar(select(func.count()).select_from(AgentEvent)) > 0
@@ -296,7 +305,7 @@ async def test_post_hook_failure_rolls_back_tool_effects(db, settings, client, s
                     raise TimeoutError()
                 raise DomainError("invalid_tool_result", "Draft result rejected")
 
-    run = await start(client, scenario, max_tool_calls=2)
+    run = await start_with_legacy_hooks(client, scenario, settings, max_tool_calls=2)
     await AgentWorker(db, settings, run_ids=(UUID(run["id"]),), hooks=RejectResult()).run_once()
     saved = (await client.get(f"/v1/agent-runs/{run['id']}")).json()
     assert saved["status"] == "failed" and saved["draft_id"] is None

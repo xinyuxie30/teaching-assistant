@@ -3,9 +3,10 @@ from uuid import UUID
 
 from fastapi import APIRouter, Depends, Query
 
-from teaching_assistant import listings
+from teaching_assistant import analysis, listings
 from teaching_assistant.db import Database
 from teaching_assistant.schemas import (
+    AnalysisStudentQuery,
     AnswerQuery,
     AssignmentQuery,
     BatchQuery,
@@ -27,6 +28,16 @@ def create_listing_router(db: Database, identity) -> APIRouter:
         # Page rows and total come from the same database snapshot.
         async with db.snapshot_sessions.begin() as session:
             return await handler(session, *args)
+
+    @router.get("/grading-batches/{batch_id}/analysis")
+    async def batch_analysis(batch_id: UUID, teacher: TeacherID):
+        return await read(analysis.batch_analysis, teacher, batch_id)
+
+    @router.get("/grading-batches/{batch_id}/analysis/students")
+    async def analysis_students(
+        batch_id: UUID, teacher: TeacherID, params: Annotated[AnalysisStudentQuery, Query()]
+    ):
+        return await read(analysis.analysis_students, teacher, batch_id, params)
 
     @router.get("/courses")
     async def courses(teacher: TeacherID, params: Annotated[SearchQuery, Query()]):

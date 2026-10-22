@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 import type { AgentRun } from "../../api/types";
 import {
-  agentActive, agentBudget, agentErrorText, agentEventDetail, agentEventText,
+  agentActive, agentBudget, agentErrorText, agentEventDetail, agentEventText, agentPaused,
   agentStatusColor, agentStatusText, preferredRun,
 } from "./agent";
 
@@ -29,16 +29,28 @@ const run = (overrides: Partial<AgentRun> = {}): AgentRun => ({
 describe("agent status", () => {
   it("translates every known status and keeps an unknown one visible", () => {
     expect(agentStatusText("waiting_teacher")).toBe("等待老师确认");
+    expect(agentStatusText("waiting_children")).toBe("等待子任务");
+    expect(agentStatusText("waiting_input")).toBe("等待补充信息");
+    expect(agentStatusText("waiting_timer")).toBe("等待定时恢复");
     expect(agentStatusText("cancelled" as AgentRun["status"])).toBe("已取消");
     expect(agentStatusText("mystery" as AgentRun["status"])).toBe("mystery");
     expect(agentStatusColor("failed")).toBe("red");
     expect(agentStatusColor("mystery" as AgentRun["status"])).toBe("default");
   });
 
-  it("only treats queued and running as active", () => {
+  it("keeps running and paused work cancellable while excluding review and terminal states", () => {
     expect(agentActive(run({ status: "queued" }))).toBe(true);
     expect(agentActive(run({ status: "running" }))).toBe(true);
+    expect(agentActive(run({ status: "waiting_children" }))).toBe(true);
+    expect(agentActive(run({ status: "waiting_input" }))).toBe(true);
+    expect(agentActive(run({ status: "waiting_timer" }))).toBe(true);
+    expect(agentPaused(run({ status: "waiting_children" }))).toBe(false);
+    expect(agentPaused(run({ status: "waiting_input" }))).toBe(true);
+    expect(agentPaused(run({ status: "waiting_timer" }))).toBe(true);
     expect(agentActive(run({ status: "waiting_teacher" }))).toBe(false);
+    expect(agentActive(run({ status: "completed" }))).toBe(false);
+    expect(agentActive(run({ status: "failed" }))).toBe(false);
+    expect(agentActive(run({ status: "cancelled" }))).toBe(false);
     expect(agentActive(null)).toBe(false);
   });
 

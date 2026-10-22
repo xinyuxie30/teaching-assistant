@@ -177,3 +177,18 @@ class ItemQuery(PageQuery):
 class ExportQuery(PageQuery):
     batch_id: UUID | None = None
     mode: Literal["working", "confirmed_only"] | None = None
+
+
+class AnalysisStudentQuery(PageQuery):
+    status: Literal["confirmed", "pending_review", "failed", "in_progress"] | None = None
+    criterion_id: Key | None = None
+    below_full_credit: bool = False
+    basis_hash: str | None = Field(default=None, pattern=r"^[a-f0-9]{64}$")
+
+    @model_validator(mode="after")
+    def valid_analysis_filter(self):
+        if self.below_full_credit and not self.criterion_id:
+            raise ValueError("below_full_credit requires criterion_id")
+        if self.criterion_id and self.status not in (None, "confirmed"):
+            raise ValueError("Criterion analysis only includes confirmed reviews")
+        return self

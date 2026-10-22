@@ -1,6 +1,6 @@
 # 项目长期记忆
 
-更新日期：2026-10-22（Asia/Shanghai）。
+更新日期：2026-10-22。
 最新决定：用户要求审查 `AGENT_REVISION_2026-10-22.md` 的新版本、继续测试并核对 GitHub。已审查修订实现，独立复跑后端 **118 passed**、前端 **40 passed**、全新库浏览器 **7/7**；业务库备份后升至 `0006`；GitHub browser 失败定位为一次定位器超时，同代码后续三轮 CI 全部通过。见 [审查与复验](AGENT_REVISION_REVIEW_2026-10-22.md)。
 当前验证：后端 118 passed、Ruff 53 文件；前端 40 passed、`tsc` 与生产构建通过；浏览器全流程 7/7、0 错误；GitHub Actions 最新提交三个 job 全部通过。业务库已为 `0006`。教学质量与真实费用仍未评测。
 
@@ -13,7 +13,7 @@
 - [原 PROJECT_MEMORY.md](D:/PyChram_project/Java_learn/Redis/local-perks/docs/teaching-assistant/PROJECT_MEMORY.md)
 - [原 MVP_SCOPE.md](D:/PyChram_project/Java_learn/Redis/local-perks/docs/teaching-assistant/MVP_SCOPE.md)
 
-原文件使用 2026-10-20（Asia/Shanghai）的日期。本轮按用户当前时区 Asia/Shanghai 记录；早期开发和测试报告保留其原有 America/Tijuana 标注。原文件保持原状；local-perks 仍是已有业务仓库。
+原文件使用 2026-10-20 的日期。原文件保持原状；local-perks 仍是已有业务仓库。
 
 优先级：用户最新决定 > 本次完整需求 > 已确认历史记录 > 助手提出的方案。用户随后明确要求开始最小实现，已在当前工作区开发；远程仓库名称及发布仍未决定。
 

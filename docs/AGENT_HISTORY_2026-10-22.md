@@ -1,6 +1,6 @@
 # Agent 历史查询与页面恢复
 
-日期：2026-10-22，Asia/Shanghai。用户在 Agent 实现过程中要求继续。本轮先对齐工作区后续提交，保留已有 DeepSeek 修复、网页入口、CSV 导入及令牌轮换，再处理页面恢复缺口。
+日期：2026-10-22。用户在 Agent 实现过程中要求继续。本轮先对齐工作区后续提交，保留已有 DeepSeek 修复、网页入口、CSV 导入及令牌轮换，再处理页面恢复缺口。
 
 ## 已完成
 
@@ -22,7 +22,7 @@
 | `status` | 可选；queued / running / waiting_teacher / completed / failed / cancelled |
 | `limit` | 默认 20，范围 1–100 |
 | `cursor` | 使用上一页 `next_cursor`；不可跨老师或筛选条件复用 |
-| `created_from / created_to` | 可选；带时区的创建时间范围 |
+| `created_from / created_to` | 可选；ISO 8601 格式（含偏移量）的创建时间范围 |
 
 返回 `items / total / limit / has_more / next_cursor`，使用创建时间和 ID 倒序游标。单次请求的页数据、总数及摘要在同一 REPEATABLE READ 快照读取；不同页面请求之间任务状态可以变化。列表不返回 `messages / pending_calls`。
 

@@ -1,6 +1,6 @@
 # 老师反馈驱动的 Agent 细则修订
 
-日期：2026-10-22，Asia/Shanghai。用户要求按照当前情况继续开发。本轮在已有任务历史与恢复代码上，补齐老师提出修改意见、Agent 基于原稿生成新版、老师独立确认的流程。
+日期：2026-10-22。用户要求按照当前情况继续开发。本轮在已有任务历史与恢复代码上，补齐老师提出修改意见、Agent 基于原稿生成新版、老师独立确认的流程。
 
 ## 页面操作
 
@@ -68,6 +68,6 @@
 
 可移植回归：[test_agent_revision.py](../backend/tests/test_agent_revision.py)、[agent-panel.test.ts](../frontend/src/features/preparation/agent-panel.test.ts)、[workflow.test.mjs](../frontend/e2e/workflow.test.mjs)。本机后端结果见 [JUnit](../.local/e2e/agent-revision-regression-2026-10-22.xml)，浏览器启动方式见 [回归说明](../frontend/e2e/README.md)。
 
-最终浏览器记录：2026-10-22 14:08（Asia/Shanghai），Node 24.16.0 / Chrome 156.0.8078.47，1 项完整工作流通过（15.78 秒），运行器退出码 0。产物：[结果及对象 ID](../.local/e2e/workflow-9708cf56-36d3-493a-95ed-909e004e9b62/result.json)、[所列源码摘要](../.local/e2e/workflow-9708cf56-36d3-493a-95ed-909e004e9b62/source-manifest.json)、[桌面截图](../.local/e2e/workflow-9708cf56-36d3-493a-95ed-909e004e9b62/agent-revision.png)、[手机截图](../.local/e2e/workflow-9708cf56-36d3-493a-95ed-909e004e9b62/agent-revision-mobile.png)。JSON/CSV 实际下载保存在同目录；这些本机产物不进入 Git。
+最终浏览器记录：2026-10-22 14:08，Node 24.16.0 / Chrome 156.0.8078.47，1 项完整工作流通过（15.78 秒），运行器退出码 0。产物：[结果及对象 ID](../.local/e2e/workflow-9708cf56-36d3-493a-95ed-909e004e9b62/result.json)、[所列源码摘要](../.local/e2e/workflow-9708cf56-36d3-493a-95ed-909e004e9b62/source-manifest.json)、[桌面截图](../.local/e2e/workflow-9708cf56-36d3-493a-95ed-909e004e9b62/agent-revision.png)、[手机截图](../.local/e2e/workflow-9708cf56-36d3-493a-95ed-909e004e9b62/agent-revision-mobile.png)。JSON/CSV 实际下载保存在同目录；这些本机产物不进入 Git。
 
-本轮没有真实 DeepSeek/Jev 调用，没有真实教师标注集、费用核算或修订质量结论。模拟器验证流程，自定义模型桩验证完整快照与反馈确实进入模型请求；真实教学质量仍需真实题目和老师评估。交付时没有提交或推送 Git 修改；复验通过后已提交并推送，复验结论见 [审查与复验](AGENT_REVISION_REVIEW_2026-10-22.md)。
+本轮没有真实 DeepSeek/Jev 调用，没有真实教师标注集、费用核算或修订质量结论。模拟器验证流程，自定义模型桩验证完整快照与反馈确实进入模型请求；真实教学质量仍需真实题目和老师评估。交付时没有提交或推送 Git 修改；复验通过后已提交并推送，且另做了一次真实 DeepSeek 单题修订（2 次调用、3,081/926 tokens、确认后完成），结论见 [审查与复验](AGENT_REVISION_REVIEW_2026-10-22.md)。

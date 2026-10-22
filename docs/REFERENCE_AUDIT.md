@@ -1,6 +1,6 @@
 # 参考资料与接口审查
 
-审查日期：2026-10-19（America/Tijuana）。
+审查日期：2026-10-19。
 方式：官方文档核验和定向静态源码阅读。没有运行参考项目、调用真实模型或进行性能测试。
 
 后续更新（2026-10-20）：当前工程已有最小后端，并新增列表与 Jev 适配代码。下文是开始实施前的参考审查；不表示当前目录仍只有设计。新增适配再次核对 [Score](https://docs.typesafe.ai/primitives/score)、[模型版本](https://docs.typesafe.ai/models) 与 [confidence](https://docs.typesafe.ai/confidence) 官方文档，采用 HTTPX 直接对接固定版本的 System One 请求，没有复制参考项目源码，当时没有进行账户级调用。当前说明已迁至 [API 与模型对照](API_AND_EVALUATION.md)；后续账户级测试见 [测试报告](TEST_REPORT_2026-10-20.md)。

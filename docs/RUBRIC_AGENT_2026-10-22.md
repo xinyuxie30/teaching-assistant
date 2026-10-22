@@ -74,7 +74,7 @@ uv run --frozen uvicorn teaching_assistant.api:create_app --factory --host 127.0
 uv run --frozen teaching-assistant agent-worker
 ```
 
-迁移链到 `0005`，包含此前 `0004` 的指纹字段与回填。本轮仅对测试库随机 schema 执行了迁移，业务库尚未升级。`agent-worker --once` 领取并处理一个可执行任务；`--drain` 处理当前就绪任务后退出，不等待未来重试。原 `worker` 命令仍负责分项批改。
+迁移链到 `0005`，包含此前 `0004` 的指纹字段与回填。业务库已于 2026-10-22 先备份（`.local/backups/teaching-before-0005.dump`）再升级到 `0005`，`alembic check` 无待生成操作。`agent-worker --once` 领取并处理一个可执行任务；`--drain` 处理当前就绪任务后退出，不等待未来重试。原 `worker` 命令仍负责分项批改。
 
 所有接口使用已有 Bearer 身份；POST 必须提供 `Idempotency-Key`，同 key 同请求复用回执，不同内容返回 409。
 
@@ -103,6 +103,19 @@ uv run --frozen teaching-assistant agent-worker
 省略 body 字段即采用模拟器默认值；模拟草稿会明确标注不能视为教学标准。使用真实模型时选择 `deepseek-rubric-agent-v1`，复用现有 `TA_DEEPSEEK_API_KEY / TA_DEEPSEEK_MODEL / TA_DEEPSEEK_EXPECTED_MODEL / TA_DEEPSEEK_REVISION / TA_DEEPSEEK_ENDPOINT / TA_DEEPSEEK_PROXY` 配置。仅配密钥不会自动调用真实模型，未配置时创建任务返回 409。
 
 返回 `waiting_teacher` 后，通过 `GET /v1/rubric-drafts/{draft_id}` 查看 `body` 和 `revision`，再由老师显式 `POST /v1/rubric-drafts/{draft_id}/confirm`，内容为 `{"expected_revision":1}`。若不满意，可用现有手动入口另建细则草稿；本轮未实现 Agent 草稿修改/驳回的网页操作。确认生成的固定版本可用于现有导入、批改、复核和导出链路。
+
+## 网页入口（2026-10-22）
+
+作业准备页的评分细则区新增“用 Agent 起草”，实现位于 `frontend/src/features/preparation/AgentPanel.tsx` 与 `agent.ts`：
+
+- 配置下拉列出两个 profile；未配置的选项禁用并说明原因，默认仍是模拟器，避免误触真实调用。
+- 发起后可填写给 Agent 的要求；运行时每 3 秒轮询任务与事件，展示状态、模型/工具预算、epoch、恢复次数和创建时间。
+- 事件只显示类型、工具名、错误说明与时间，不展示工具参数或题目原文；失败原因翻译为可操作文案。
+- `queued/running` 可取消；`waiting_teacher` 显示“打开草稿并确认”，进入原有草稿页由老师显式确认，确认与任务完成仍在同一事务。
+- 模拟器草稿有明确警示：只验证工程流程，不能作为教学标准。
+- 写操作沿用页面会话内的幂等键；结果未确定时复用原请求重试，不自动重发。
+
+浏览器回归已覆盖这条链路：模拟任务 `b8f1dffe-…` 生成草稿 `3a4f1a26-…`，确认后 `completed`，随后手动细则为第 2 版；整轮 7/7 断言阶段、0 浏览器错误，产物在 `.local/e2e/workflow-d2396b3a-a2f4-45f2-8d6a-8e44c0b5941f/`。
 
 ## 验证与下一步
 
@@ -140,4 +153,4 @@ uv run --frozen teaching-assistant agent-worker
 
 全量回归 **107 passed**。真实用量 13 次调用 / 15,418 input / 3,375 output；未配置单价，费用未知。业务库仍未升级。详细记录见 `.local/e2e/real-deepseek-verification-2026-10-22.md`。
 
-后续优先把现有题目页接到这些接口，展示生成进度、草稿、失败原因和老师确认；再用少量真实题目检查 DeepSeek 工具调用与细则质量。通用规划、多 Agent、长期记忆、Shell/HTTP Hook、沙箱、向量检索和产品心跳仍待真实任务驱动，当前没有实现或创建自动化。
+题目页已接入这些接口，可展示生成进度、草稿、预算、失败原因和老师确认；下一步用少量真实题目检查 DeepSeek 工具调用与细则质量。通用规划、多 Agent、长期记忆、Shell/HTTP Hook、沙箱、向量检索和产品心跳仍待真实任务驱动，当前没有实现或创建自动化。

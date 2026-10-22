@@ -7,6 +7,7 @@ from teaching_assistant.domain import (
     Evaluation,
     Evidence,
     EvidenceOutput,
+    ModelError,
 )
 
 
@@ -50,7 +51,7 @@ class FakeEvidenceExtractor:
 
 
 class ManualEvidenceExtractor:
-    """Jev returns levels, not quotations. Leave evidence selection explicitly to the teacher."""
+    """Local placeholder for profiles that leave evidence selection to the teacher."""
 
     requested_model = "manual-evidence-v1"
     adapter_version = "manual-evidence-v1"
@@ -64,6 +65,18 @@ class ManualEvidenceExtractor:
 def build_adapters(settings, profile) -> tuple[Evaluator, EvidenceExtractor]:
     if profile.id == "fake-v1":
         return FakeEvaluator(), FakeEvidenceExtractor()
+    if profile.manifest["provider"] == "deepseek":
+        from teaching_assistant.deepseek import DeepSeekEvaluator, DeepSeekEvidenceExtractor
+        from teaching_assistant.grading_context import EVIDENCE_VERSION
+
+        extractor = (
+            DeepSeekEvidenceExtractor(settings, profile)
+            if profile.manifest["evidence_strategy"] == EVIDENCE_VERSION
+            else ManualEvidenceExtractor()
+        )
+        return DeepSeekEvaluator(settings, profile), extractor
+    if profile.manifest["provider"] != "typesafe":
+        raise ModelError("unsupported_model_provider", retryable=False)
     from teaching_assistant.jev import JevEvaluator
 
     return JevEvaluator(settings, profile), ManualEvidenceExtractor()

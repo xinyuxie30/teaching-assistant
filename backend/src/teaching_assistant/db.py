@@ -180,6 +180,49 @@ class GradingItem(Entity, Base):
     review_revision: Mapped[int] = mapped_column(Integer, default=0)
 
 
+class AgentRun(Entity, Base):
+    __tablename__ = "agent_runs"
+    __table_args__ = (
+        CheckConstraint(
+            "status IN ('queued','running','waiting_teacher','completed','failed','cancelled')"
+        ),
+        CheckConstraint("models_used >= 0 AND tools_used >= 0 AND event_seq >= 0"),
+        Index("ix_agent_runs_ready", "status", "ready_at", "lease_until"),
+    )
+    teacher_id: Mapped[UUID] = mapped_column(ForeignKey("teachers.id"), index=True)
+    question_version_id: Mapped[UUID] = mapped_column(ForeignKey("question_versions.id"))
+    draft_id: Mapped[UUID | None] = mapped_column(ForeignKey("rubric_drafts.id"))
+    profile_id: Mapped[str] = mapped_column(String(80))
+    manifest: Mapped[dict[str, Any]] = mapped_column(JSONB)
+    limits: Mapped[dict[str, Any]] = mapped_column(JSONB)
+    messages: Mapped[list[dict[str, Any]]] = mapped_column(JSONB)
+    pending_calls: Mapped[list[dict[str, Any]]] = mapped_column(JSONB, default=list)
+    question_read: Mapped[bool] = mapped_column(Boolean, default=False)
+    status: Mapped[str] = mapped_column(String(24), default="queued")
+    ready_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+    expires_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))
+    lease_until: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    lease_owner: Mapped[str | None] = mapped_column(String(120))
+    epoch: Mapped[int] = mapped_column(Integer, default=0)
+    attempts: Mapped[int] = mapped_column(Integer, default=0)
+    models_used: Mapped[int] = mapped_column(Integer, default=0)
+    tools_used: Mapped[int] = mapped_column(Integer, default=0)
+    stop_repairs: Mapped[int] = mapped_column(Integer, default=0)
+    event_seq: Mapped[int] = mapped_column(Integer, default=0)
+    inflight_seq: Mapped[int | None] = mapped_column(Integer)
+    last_error: Mapped[str | None] = mapped_column(String(120))
+
+
+class AgentEvent(Entity, Base):
+    __tablename__ = "agent_events"
+    __table_args__ = (UniqueConstraint("run_id", "sequence"),)
+    run_id: Mapped[UUID] = mapped_column(ForeignKey("agent_runs.id"), index=True)
+    sequence: Mapped[int] = mapped_column(Integer)
+    epoch: Mapped[int] = mapped_column(Integer)
+    kind: Mapped[str] = mapped_column(String(40))
+    body: Mapped[dict[str, Any]] = mapped_column(JSONB)
+
+
 class BatchItem(Base):
     __tablename__ = "batch_items"
     batch_id: Mapped[UUID] = mapped_column(ForeignKey("grading_batches.id"), primary_key=True)
@@ -213,6 +256,7 @@ class ModelCall(Entity, Base):
     usage: Mapped[dict[str, Any] | None] = mapped_column(JSONB)
     error_code: Mapped[str | None] = mapped_column(String(120))
     provider_request_id: Mapped[str | None] = mapped_column(String(255))
+    provider_fingerprint: Mapped[str | None] = mapped_column(String(255))
     prompt_hash: Mapped[str | None] = mapped_column(String(64))
     http_status: Mapped[int | None] = mapped_column(Integer)
     error_retryable: Mapped[bool | None] = mapped_column(Boolean)

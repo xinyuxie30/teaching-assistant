@@ -312,6 +312,9 @@ async def confirm_draft(
         await session.flush()
         draft.confirmed_version_id = frozen.id
         audit(session, teacher, "rubric_confirmed", frozen.id, draft_id=str(draft.id))
+    from teaching_assistant.agent.service import rubric_confirmed
+
+    await rubric_confirmed(session, teacher, draft.id, frozen.id)
     return {"id": str(frozen.id), "version": frozen.version, "content_hash": frozen.content_hash}
 
 
@@ -516,6 +519,9 @@ async def create_batch(
 
 async def batch_view(session: AsyncSession, teacher: UUID, batch_id: UUID) -> dict:
     batch = await owned_batch(session, teacher, batch_id)
+    frozen = await session.get(RubricVersion, batch.rubric_version_id)
+    question = await session.get(QuestionVersion, frozen.question_version_id)
+    assignment = await session.get(Assignment, question.assignment_id)
     items = (
         await session.execute(
             select(
@@ -531,7 +537,20 @@ async def batch_view(session: AsyncSession, teacher: UUID, batch_id: UUID) -> di
     ).all()
     return {
         "id": str(batch.id),
+        "created_at": json_time(batch.created_at),
         "rubric_version_id": str(batch.rubric_version_id),
+        "rubric_version": frozen.version,
+        "assignment": {
+            "id": str(assignment.id),
+            "title": assignment.title,
+            "course_id": str(assignment.course_id),
+            "classroom_id": str(assignment.classroom_id),
+        },
+        "question": {
+            "id": str(question.id),
+            "question_key": question.question_key,
+            "version": question.version,
+        },
         "status": batch.status,
         "outcome": batch.outcome,
         "counts": batch.counts,
@@ -554,6 +573,8 @@ async def item_view(session: AsyncSession, teacher: UUID, item_id: UUID) -> dict
     answer = await session.get(AnswerVersion, item.answer_version_id)
     frozen = await session.get(RubricVersion, item.rubric_version_id)
     question = await session.get(QuestionVersion, frozen.question_version_id)
+    student = await session.get(Student, answer.student_id)
+    assignment = await session.get(Assignment, question.assignment_id)
     assessments = list(
         await session.scalars(
             select(Assessment)
@@ -579,6 +600,17 @@ async def item_view(session: AsyncSession, teacher: UUID, item_id: UUID) -> dict
         "evaluation_profile": item.evaluation_profile,
         "evaluation_profile_manifest": profile.manifest,
         "simulation": item.evaluation_profile == "fake-v1",
+        "student": {
+            "id": str(student.id),
+            "name": student.name,
+            "external_id": student.external_id,
+        },
+        "assignment": {
+            "id": str(assignment.id),
+            "title": assignment.title,
+            "course_id": str(assignment.course_id),
+            "classroom_id": str(assignment.classroom_id),
+        },
         "answer": {
             "id": str(answer.id),
             "text": answer.answer_text,
@@ -587,6 +619,7 @@ async def item_view(session: AsyncSession, teacher: UUID, item_id: UUID) -> dict
         },
         "question": {
             "id": str(question.id),
+            "question_key": question.question_key,
             "version": question.version,
             "prompt": question.prompt,
             "reference": question.reference,
@@ -639,6 +672,7 @@ async def item_view(session: AsyncSession, teacher: UUID, item_id: UUID) -> dict
                     "usage": c.usage,
                     "error_code": c.error_code,
                     "provider_request_id": c.provider_request_id,
+                    "provider_fingerprint": c.provider_fingerprint,
                     "prompt_hash": c.prompt_hash,
                     "http_status": c.http_status,
                     "error_retryable": c.error_retryable,

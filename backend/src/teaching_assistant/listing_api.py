@@ -56,6 +56,10 @@ def create_listing_router(db: Database, identity) -> APIRouter:
     ):
         return await read(listings.questions, teacher, assignment_id, params)
 
+    @router.get("/assignments/{assignment_id}")
+    async def assignment_detail(assignment_id: UUID, teacher: TeacherID):
+        return await read(listings.assignment_detail, teacher, assignment_id)
+
     @router.get("/question-versions/{question_id}/rubric-drafts")
     async def drafts(question_id: UUID, teacher: TeacherID, params: Annotated[DraftQuery, Query()]):
         return await read(listings.drafts, teacher, question_id, params)

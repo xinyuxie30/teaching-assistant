@@ -41,6 +41,7 @@ from teaching_assistant.evaluators import (
     EvidenceExtractor,
     build_adapters,
 )
+from teaching_assistant.grading_runtime import GRADING_STEPS, GradingRuntime
 from teaching_assistant.profiles import ProfileRegistry
 from teaching_assistant.service import refresh_batches
 from teaching_assistant.settings import Settings
@@ -217,7 +218,9 @@ class Worker:
         self, lease: Lease, request: AssessmentInput, kind: str, input_hash: str
     ) -> UUID:
         evaluator, extractor = self.adapters(request.profile)
-        adapter = evaluator if kind == "evaluate" else extractor
+        runtime = GradingRuntime(evaluator, extractor)
+        runtime.preflight(request, kind)
+        adapter = runtime.adapter(kind)
         prompt_hash = getattr(adapter, "prompt_hash", None)
         prompt_hash = prompt_hash(request) if callable(prompt_hash) else None
         async with self.db.sessions.begin() as session:
@@ -242,6 +245,8 @@ class Worker:
 
     async def execute_step(self, lease: Lease, request: AssessmentInput, kind: str) -> Step:
         evaluator, extractor = self.adapters(request.profile)
+        runtime = GradingRuntime(evaluator, extractor)
+        runtime.adapter(kind)
         input_hash = digest(
             {"contract": "assessment-v1", "kind": kind, **request.model_dump(mode="json")}
         )
@@ -261,13 +266,7 @@ class Worker:
         started = time.monotonic()
         try:
             async with asyncio.timeout(self.settings.call_timeout_seconds):
-                if kind == "evaluate":
-                    output = Evaluation.model_validate(await evaluator.assess(request))
-                    candidate(output, request.criterion)
-                else:
-                    # No candidate level or student history is included in this extraction input.
-                    output = EvidenceOutput.model_validate(await extractor.extract(request))
-                    validate_evidence(request.answer, output)
+                output = await runtime.invoke(request, kind)
         except asyncio.CancelledError:
             # Leave the persisted call as unknown until the lease is reclaimed.
             raise
@@ -294,6 +293,7 @@ class Worker:
                         exc.http_status,
                     )
                     call.returned_model, call.usage = exc.returned_model, exc.usage
+                    call.provider_fingerprint = exc.provider_fingerprint
             if isinstance(exc, ModelError):
                 raise
             raise ModelError(code, retryable=True) from exc
@@ -302,12 +302,14 @@ class Worker:
             call = await session.get(ModelCall, call_id)
             call.status = "succeeded"
             call.duration_ms = int((time.monotonic() - started) * 1000)
-            if isinstance(output, Evaluation):
-                call.returned_model = output.returned_model
-                call.adapter_version, call.usage = output.adapter_version, output.usage
-                call.provider_request_id = output.provider_request_id
-                call.prompt_hash = output.prompt_hash or call.prompt_hash
-                call.http_status = output.http_status
+            metadata = output if isinstance(output, Evaluation) else output.model_metadata
+            if metadata is not None:
+                call.returned_model = metadata.returned_model
+                call.adapter_version, call.usage = metadata.adapter_version, metadata.usage
+                call.provider_request_id = metadata.provider_request_id
+                call.provider_fingerprint = metadata.provider_fingerprint
+                call.prompt_hash = metadata.prompt_hash or call.prompt_hash
+                call.http_status = metadata.http_status
             else:
                 call.returned_model = output.extractor_version
                 call.adapter_version, call.usage = output.extractor_version, {}
@@ -428,6 +430,11 @@ class Worker:
     async def execute(self, lease: Lease) -> None:
         try:
             rubric, requests = await self.context(lease)
+            # Validate all frozen inputs before reserving the first potentially billable call.
+            for request in requests:
+                runtime = GradingRuntime(*self.adapters(request.profile))
+                for kind in GRADING_STEPS:
+                    runtime.preflight(request, kind)
             for request in requests:
                 evaluation = await self.execute_step(lease, request, "evaluate")
                 evidence = await self.execute_step(lease, request, "extract_evidence")

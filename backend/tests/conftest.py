@@ -51,6 +51,12 @@ async def db():
 def settings():
     return Settings(
         dev_api_token=f"test-token-{uuid4().hex}",
+        jev_model=None,
+        jev_api_key=None,
+        jev_proxy=None,
+        deepseek_model=None,
+        deepseek_api_key=None,
+        deepseek_proxy=None,
         call_timeout_seconds=0.3,
         lease_seconds=5,
         retry_delay_seconds=0,

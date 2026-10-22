@@ -190,6 +190,8 @@ export interface AgentRun {
   status: AgentStatus;
   error_code: string | null;
   draft_id: string | null;
+  source_draft?: { id: string; revision: number; content_hash: string } | null;
+  revision_feedback?: string;
   waiting_for: string | null;
   profile_id: string;
   manifest: { provider: string; model: string; revision?: string };

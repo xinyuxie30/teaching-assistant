@@ -122,6 +122,31 @@ test("one synthetic assignment: preparation, fake evaluation, review and both ex
     const agentDraft = await get(`/v1/rubric-drafts/${agentRun.draft_id}`);
     assert.equal(agentDraft.body.criteria.length, 1);
     assert.equal(agentDraft.body.criteria[0].maximum_points, "10.00");
+    assert.equal(agentDraft.confirmed_version_id, null);
+    const originalRun = agentRun;
+    const feedback = "请细化部分得分的描述，保留满分。此条只验证修订流程。";
+    await fill("对当前草稿的修改意见", feedback);
+    const revised = await post(`/v1/question-versions/${question.id}/rubric-agent-runs`, () => click("按修改意见生成新版"));
+    assert.equal(revised.sent.source_draft_id, originalRun.draft_id);
+    assert.equal(revised.sent.instructions, feedback);
+    assert.notEqual(revised.body.id, originalRun.id);
+    await eventually("revised agent run waits for separate teacher confirmation", async () => {
+      agentRun = await get(`/v1/agent-runs/${revised.body.id}`);
+      assert.equal(agentRun.status, "waiting_teacher");
+      assert.equal(agentRun.source_draft.id, originalRun.draft_id);
+      assert.equal(agentRun.revision_feedback, feedback);
+      assert.notEqual(agentRun.draft_id, originalRun.draft_id);
+    }, 60_000);
+    await page.getByText(`修改意见：${feedback}`, { exact: true }).waitFor();
+    await page.getByRole("button", { name: "打开草稿并确认", exact: true }).waitFor();
+    const revisedDraft = await get(`/v1/rubric-drafts/${agentRun.draft_id}`);
+    assert.equal(revisedDraft.confirmed_version_id, null);
+    assert.deepEqual(await get(`/v1/rubric-drafts/${originalRun.draft_id}`), agentDraft);
+    await page.locator(".agent-panel").screenshot({ path: join(directory, "agent-revision.png") });
+    await page.setViewportSize({ width: 390, height: 844 });
+    await page.locator(".agent-panel").screenshot({ path: join(directory, "agent-revision-mobile.png") });
+    assert(await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth), "Revision UI must fit a narrow screen");
+    await page.setViewportSize({ width: 1440, height: 1000 });
     await click("打开草稿并确认");
     const { body: agentRubric } = await post(`/v1/rubric-drafts/${agentRun.draft_id}/confirm`, () => click("确认并固定评分细则"));
     assert.equal(agentRubric.version, 1);
@@ -132,7 +157,11 @@ test("one synthetic assignment: preparation, fake evaluation, review and both ex
     });
     report.ids.agentRun = agentRun.id;
     report.ids.agentDraft = agentRun.draft_id;
-    checkpoint("Agent drafted through the page, waited for the teacher, then completed with the confirmation");
+    report.ids.agentSourceRun = originalRun.id;
+    report.ids.agentSourceDraft = originalRun.draft_id;
+    assert.equal((await get(`/v1/agent-runs/${originalRun.id}`)).status, "waiting_teacher");
+    assert.deepEqual(await get(`/v1/rubric-drafts/${originalRun.draft_id}`), agentDraft);
+    checkpoint("Agent revision kept the source intact, showed provenance and waited for its own confirmation");
     // The manual path stays the source of the two-criterion rubric used by the rest of this fixture.
     await click("手动起草");
     await fill("整体评分说明", "两个独立评分点，仅用于浏览器回归，不用于教学质量评测。");
@@ -153,6 +182,8 @@ test("one synthetic assignment: preparation, fake evaluation, review and both ex
     assert.equal(rubric.version, 2);
     report.ids.rubric = rubric.id;
     checkpoint("Created isolated roster, question and confirmed rubric through the UI");
+    // The confirmation receipt must reach the view before the frozen-version action exists.
+    await page.getByText("固定版本", { exact: true }).waitFor();
     await click("使用这份固定细则，导入答案");
 
     const imports = [

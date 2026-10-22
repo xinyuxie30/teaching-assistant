@@ -1,10 +1,11 @@
 from datetime import timedelta
+from uuid import UUID
 
 from sqlalchemy import func, select
 
 from teaching_assistant import service
 from teaching_assistant.agent.context import initial_messages, manifest, payload, tool_result
-from teaching_assistant.db import AgentEvent, AgentRun
+from teaching_assistant.db import AgentEvent, AgentRun, RubricDraft
 from teaching_assistant.domain import DomainError, ModelError, digest
 from teaching_assistant.schemas import json_time
 
@@ -74,18 +75,58 @@ async def owned_run(session, teacher, run_id, *, lock=False):
     return run
 
 
+async def list_runs(session, teacher, params):
+    from teaching_assistant.listings import page
+
+    if params.question_version_id is not None:
+        await service.owned_question(session, teacher, params.question_version_id)
+    query = select(AgentRun.id, AgentRun.created_at).where(AgentRun.teacher_id == teacher)
+    if params.question_version_id is not None:
+        query = query.where(AgentRun.question_version_id == params.question_version_id)
+    if params.status is not None:
+        query = query.where(AgentRun.status == params.status)
+    result = await page(session, query, AgentRun, teacher, "agent-runs", params)
+    ids = [UUID(row["id"]) for row in result["items"]]
+    # Both the page and its summaries use the caller's repeatable-read snapshot.
+    rows = await session.scalars(select(AgentRun).where(AgentRun.id.in_(ids)))
+    by_id = {row.id: row for row in rows}
+    result["items"] = [view(by_id[run_id]) for run_id in ids]
+    return result
+
+
 async def create_run(session, teacher, question_id, data, settings):
     await service.owned_question(session, teacher, question_id)
+    revision_context = None
+    if data.source_draft_id is not None:
+        source = await session.scalar(
+            select(RubricDraft)
+            .where(
+                RubricDraft.id == data.source_draft_id,
+                RubricDraft.question_version_id == question_id,
+            )
+            .with_for_update()
+        )
+        if source is None:
+            raise DomainError("not_found", "Source draft not found for this question", 404)
+        revision_context = {
+            "version": "rubric-revision-context-v1",
+            "feedback": data.instructions,
+            "source_revision": source.revision,
+            "source_content_hash": digest(source.body),
+            "source_rubric": source.body,
+        }
     selected = next(p for p in profiles(settings) if p["alias"] == data.agent_profile)
     if not selected["ready"]:
         raise DomainError("model_not_configured", "Configure the selected agent model first", 409)
-    limits = data.model_dump(exclude={"agent_profile", "instructions"})
-    messages = initial_messages(data.instructions)
+    limits = data.model_dump(exclude={"agent_profile", "instructions", "source_draft_id"})
+    messages = initial_messages(data.instructions, revision_context)
     payload(messages, selected["manifest"], limits)
     now = await session.scalar(select(func.clock_timestamp()))
     run = AgentRun(
         teacher_id=teacher,
         question_version_id=question_id,
+        source_draft_id=data.source_draft_id,
+        revision_context=revision_context,
         profile_id=selected["id"],
         manifest=selected["manifest"],
         limits=limits,
@@ -94,20 +135,49 @@ async def create_run(session, teacher, question_id, data, settings):
     )
     session.add(run)
     await session.flush()
-    event(session, run, "created", question_version_id=str(question_id), profile_id=run.profile_id)
+    source = revision_source(run)
+    event(
+        session,
+        run,
+        "created",
+        question_version_id=str(question_id),
+        profile_id=run.profile_id,
+        source_draft=source,
+    )
     service.audit(
-        session, teacher, "rubric_agent_created", run.id, question_version_id=str(question_id)
+        session,
+        teacher,
+        "rubric_agent_created",
+        run.id,
+        question_version_id=str(question_id),
+        source_draft=source,
     )
     return view(run)
 
 
-def view(run):
+def revision_source(run):
+    if run.source_draft_id is None:
+        return None
+    return {
+        "id": str(run.source_draft_id),
+        "revision": run.revision_context["source_revision"],
+        "content_hash": run.revision_context["source_content_hash"],
+    }
+
+
+def view(run, *, detail=False):
     return {
         "id": str(run.id),
         "question_version_id": str(run.question_version_id),
         "status": run.status,
         "error_code": run.last_error,
         "draft_id": str(run.draft_id) if run.draft_id else None,
+        "source_draft": revision_source(run),
+        **(
+            {"revision_feedback": run.revision_context["feedback"]}
+            if detail and run.revision_context
+            else {}
+        ),
         "waiting_for": "teacher_rubric_confirmation" if run.status == "waiting_teacher" else None,
         "profile_id": run.profile_id,
         "manifest": run.manifest,

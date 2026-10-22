@@ -6,8 +6,8 @@ from sqlalchemy import select
 
 from teaching_assistant import service as operations
 from teaching_assistant.agent import service
-from teaching_assistant.agent.contracts import CancelInput, RunInput
-from teaching_assistant.db import AgentEvent, AgentRun
+from teaching_assistant.agent.contracts import AgentQuery, CancelInput, RunInput
+from teaching_assistant.db import AgentEvent
 from teaching_assistant.schemas import json_time
 
 
@@ -27,25 +27,20 @@ def router(db, identity, settings):
             teacher,
             f"rubric-agent:{question_id}",
             key,
-            data.model_dump(mode="json"),
+            # Preserve pre-0006 idempotency hashes for ordinary draft requests.
+            data.model_dump(mode="json", exclude_none=True),
             lambda session: service.create_run(session, teacher, question_id, data, settings),
         )
 
     @result.get("/v1/agent-runs")
-    async def listing(teacher: TeacherID, limit: Annotated[int, Query(ge=1, le=100)] = 20):
+    async def listing(teacher: TeacherID, params: Annotated[AgentQuery, Query()]):
         async with db.snapshot_sessions.begin() as session:
-            rows = await session.scalars(
-                select(AgentRun)
-                .where(AgentRun.teacher_id == teacher)
-                .order_by(AgentRun.created_at.desc(), AgentRun.id.desc())
-                .limit(limit)
-            )
-            return {"items": [service.view(row) for row in rows]}
+            return await service.list_runs(session, teacher, params)
 
     @result.get("/v1/agent-runs/{run_id}")
     async def detail(run_id: UUID, teacher: TeacherID):
         async with db.snapshot_sessions.begin() as session:
-            return service.view(await service.owned_run(session, teacher, run_id))
+            return service.view(await service.owned_run(session, teacher, run_id), detail=True)
 
     @result.get("/v1/agent-runs/{run_id}/events")
     async def events(

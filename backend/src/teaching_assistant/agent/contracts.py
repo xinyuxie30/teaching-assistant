@@ -1,11 +1,22 @@
 from typing import Literal
+from uuid import UUID
 
-from pydantic import Field, model_validator
+from pydantic import Field, field_validator, model_validator
 
 from teaching_assistant.domain import Contract, ModelMetadata
+from teaching_assistant.schemas import PageQuery
+
+
+class AgentQuery(PageQuery):
+    limit: int = Field(default=20, ge=1, le=100)
+    question_version_id: UUID | None = None
+    status: (
+        Literal["queued", "running", "waiting_teacher", "completed", "failed", "cancelled"] | None
+    ) = None
 
 
 class RunInput(Contract):
+    source_draft_id: UUID | None = None
     agent_profile: Literal["fake-rubric-agent-v1", "deepseek-rubric-agent-v1"] = (
         "fake-rubric-agent-v1"
     )
@@ -16,6 +27,19 @@ class RunInput(Contract):
     max_tool_calls: int = Field(default=10, ge=1, le=24)
     max_context_characters: int = Field(default=40000, ge=2000, le=200000)
     max_seconds: int = Field(default=300, ge=10, le=3600)
+
+    @field_validator("instructions")
+    @classmethod
+    def nonblank_instructions(cls, value):
+        if not value.strip():
+            raise ValueError("Instructions must contain non-whitespace text")
+        return value
+
+    @model_validator(mode="after")
+    def revision_requires_feedback(self):
+        if self.source_draft_id is not None and "instructions" not in self.model_fields_set:
+            raise ValueError("Draft revisions require explicit teacher instructions")
+        return self
 
 
 class CancelInput(Contract):

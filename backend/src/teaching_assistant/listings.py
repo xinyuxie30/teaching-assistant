@@ -14,6 +14,7 @@ from teaching_assistant.db import (
     AnswerVersion,
     Assessment,
     Assignment,
+    AssignmentMember,
     BatchItem,
     Classroom,
     Course,
@@ -353,7 +354,7 @@ async def grading_items(session, teacher: UUID, params: ItemQuery) -> dict:
             GradingItem.rubric_version_id,
             GradingItem.evaluation_profile,
             GradingItem.status,
-            GradingItem.last_error,
+            GradingItem.last_error.label("error_code"),
             GradingItem.suggested_score,
             GradingItem.review_revision,
             Review.confirmed_score,
@@ -437,6 +438,35 @@ async def exports(session, teacher: UUID, params: ExportQuery) -> dict:
     if params.mode:
         query = query.where(ExportSnapshot.body["mode"].as_string() == params.mode)
     return await page(session, query, ExportSnapshot, teacher, "exports", params)
+
+
+async def assignment_detail(session, teacher: UUID, assignment_id: UUID) -> dict:
+    assignment = await owned_assignment(session, teacher, assignment_id)
+    course = await session.get(Course, assignment.course_id)
+    classroom = await session.get(Classroom, assignment.classroom_id)
+    # Import authorization uses this frozen roster, not today's classroom membership.
+    rows = (
+        (
+            await session.execute(
+                select(Student.id, Student.external_id, Student.name)
+                .join(AssignmentMember, AssignmentMember.student_id == Student.id)
+                .where(AssignmentMember.assignment_id == assignment.id)
+                .order_by(Student.external_id, Student.id)
+            )
+        )
+        .mappings()
+        .all()
+    )
+    return {
+        "id": str(assignment.id),
+        "created_at": json_value(assignment.created_at),
+        "title": assignment.title,
+        "course_id": str(course.id),
+        "course_name": course.name,
+        "classroom_id": str(classroom.id),
+        "classroom_name": classroom.name,
+        "roster": [{key: json_value(value) for key, value in row.items()} for row in rows],
+    }
 
 
 async def question_detail(session, teacher: UUID, question_id: UUID) -> dict:

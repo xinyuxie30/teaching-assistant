@@ -35,6 +35,7 @@ class ModelError(DomainError):
         provider_request_id: str | None = None,
         http_status: int | None = None,
         returned_model: str | None = None,
+        provider_fingerprint: str | None = None,
         usage: dict[str, int] | None = None,
     ):
         super().__init__(code, "Model operation failed; inspect the recorded error code")
@@ -43,6 +44,7 @@ class ModelError(DomainError):
         self.provider_request_id = provider_request_id
         self.http_status = http_status
         self.returned_model = returned_model
+        self.provider_fingerprint = provider_fingerprint
         self.usage = usage
 
 
@@ -108,11 +110,7 @@ class AssessmentInput(Contract):
     profile: str
 
 
-class Evaluation(Contract):
-    candidate_level_id: str | None = None
-    probabilities: dict[str, float] | None = None
-    provider_score: float | None = Field(default=None, allow_inf_nan=False)
-    provider_confidence: float | None = Field(default=None, ge=0, le=1, allow_inf_nan=False)
+class ModelMetadata(Contract):
     requested_model: str
     returned_model: str
     adapter_version: str
@@ -120,12 +118,21 @@ class Evaluation(Contract):
     provider_request_id: str | None = None
     prompt_hash: str | None = None
     http_status: int | None = None
+    provider_fingerprint: str | None = None
+
+
+class Evaluation(ModelMetadata):
+    candidate_level_id: str | None = None
+    probabilities: dict[str, float] | None = None
+    provider_score: float | None = Field(default=None, allow_inf_nan=False)
+    provider_confidence: float | None = Field(default=None, ge=0, le=1, allow_inf_nan=False)
 
 
 class EvidenceOutput(Contract):
     citations: list[Evidence]
     absence_claim: bool = False
     extractor_version: str
+    model_metadata: ModelMetadata | None = None
 
 
 def digest(value: object) -> str:

@@ -12,6 +12,7 @@ from uuid import UUID, uuid4
 
 from pydantic import Field, model_validator
 
+from teaching_assistant.comparison_costs import Pricing, estimate_usage, resolve_pricing
 from teaching_assistant.domain import (
     AssessmentInput,
     Contract,
@@ -152,16 +153,10 @@ def summarize(report: dict, dataset: Dataset) -> dict:
         input_tokens = sum(u["input_tokens"] for u in reported_usage)
         output_tokens = sum(u["output_tokens"] for u in reported_usage)
         unknown_usage = len(external) - len(reported_usage)
-        pricing = report["policy"]["pricing"]
-        estimated_cost = None
-        if pricing is not None and external and reported_usage:
-            estimated_cost = str(
-                (
-                    Decimal(input_tokens) * Decimal(pricing["input_usd_per_million"])
-                    + Decimal(output_tokens) * Decimal(pricing["output_usd_per_million"])
-                )
-                / Decimal(1_000_000)
-            )
+        pricing = report["policy"].get("pricing_by_profile", {}).get(profile["id"])
+        if "pricing_by_profile" not in report["policy"]:
+            pricing = report["policy"].get("pricing")  # Historical single-provider reports.
+        estimated_cost, unpriced_usage = estimate_usage(reported_usage, pricing)
         durations = [a["duration_ms"] for a in attempts if a["duration_ms"] is not None]
         severe_cutoff = report["policy"]["severe_error_points"]
         summaries.append(
@@ -203,8 +198,14 @@ def summarize(report: dict, dataset: Dataset) -> dict:
                 "reported_output_tokens": output_tokens if reported_usage else None,
                 "external_attempts_with_unknown_usage": unknown_usage,
                 "estimated_usd_for_reported_usage": estimated_cost,
+                "pricing": pricing,
+                "reported_attempts_without_price": unpriced_usage,
                 "cost_is_complete": bool(
-                    external and reported_usage and unknown_usage == 0 and pricing
+                    external
+                    and reported_usage
+                    and unknown_usage == 0
+                    and unpriced_usage == 0
+                    and pricing
                 ),
                 "attempt_latency_ms_median": statistics.median(durations) if durations else None,
                 "attempt_latency_ms_max": max(durations) if durations else None,
@@ -285,14 +286,19 @@ def validate_options(args) -> dict | None:
         raise ValueError("severe-error-points must be a finite positive number")
     prices = (args.input_usd_per_million, args.output_usd_per_million)
     if all(p is None for p in prices):
+        if getattr(args, "cached_input_usd_per_million", None) is not None or args.price_source:
+            raise ValueError("Price source/cache price requires both input and output prices")
         return None
     if any(p is None or not p.is_finite() or p < 0 for p in prices) or not args.price_source:
         raise ValueError("Specify both finite nonnegative token prices and --price-source")
-    return {
-        "input_usd_per_million": str(prices[0]),
-        "output_usd_per_million": str(prices[1]),
-        "source": args.price_source,
-    }
+    return Pricing.model_validate(
+        {
+            "input_usd_per_million": str(prices[0]),
+            "output_usd_per_million": str(prices[1]),
+            "cached_input_usd_per_million": getattr(args, "cached_input_usd_per_million", None),
+            "source": args.price_source,
+        }
+    ).model_dump(mode="json")
 
 
 async def run_comparison(settings: Settings, args) -> dict:
@@ -306,6 +312,7 @@ async def run_comparison(settings: Settings, args) -> dict:
         raise ValueError("Do not select the same profile or alias twice")
     if len(profiles) < 1 or len(profiles) > 4:
         raise ValueError("Select 1–4 distinct profiles")
+    pricing_by_profile = resolve_pricing(args, profiles, registry, pricing)
     planned_points = len(dataset.samples) * len(dataset.rubric.criteria) * len(profiles)
     plan = {
         "dataset_id": dataset.dataset_id,
@@ -324,6 +331,7 @@ async def run_comparison(settings: Settings, args) -> dict:
         "max_adapter_calls": args.max_calls,
         "max_seconds": args.max_seconds,
         "max_attempts_per_point": args.max_attempts,
+        "pricing_by_profile": pricing_by_profile,
     }
     if args.dry_run:
         return {
@@ -356,6 +364,7 @@ async def run_comparison(settings: Settings, args) -> dict:
             if args.severe_error_points is not None
             else None,
             "pricing": pricing,
+            "pricing_by_profile": pricing_by_profile,
             "max_attempts_per_point": args.max_attempts,
         },
         "limitations": [
@@ -364,6 +373,8 @@ async def run_comparison(settings: Settings, args) -> dict:
             "Confidence is not correctness; the audit threshold never auto-confirms a grade.",
             "Synthetic labels do not establish teaching quality; use teacher-confirmed held-out samples.",
             "No result from this command is written as a student grade.",
+            "A provider model alias may change underneath a fixed profile; returned names are recorded, not proof of immutable weights.",
+            "Cost estimates cover reported assessment usage only, not evidence, review or unknown calls.",
         ],
         "results": [],
     }
@@ -431,6 +442,7 @@ async def run_comparison(settings: Settings, args) -> dict:
                     "requested_model": profile.manifest["model"],
                     "returned_model": None,
                     "provider_request_id": None,
+                    "provider_fingerprint": None,
                     "prompt_hash": row["prompt_hash"],
                     "usage": None,
                     "http_status": None,
@@ -458,6 +470,7 @@ async def run_comparison(settings: Settings, args) -> dict:
                         {
                             "status": "succeeded",
                             "returned_model": output.returned_model,
+                            "provider_fingerprint": output.provider_fingerprint,
                             "provider_request_id": output.provider_request_id,
                             "prompt_hash": output.prompt_hash or attempt["prompt_hash"],
                             "usage": output.usage,
@@ -488,12 +501,14 @@ async def run_comparison(settings: Settings, args) -> dict:
                             "error_code": code,
                             "usage": failure.usage,
                             "returned_model": failure.returned_model,
+                            "provider_fingerprint": failure.provider_fingerprint,
                             "provider_request_id": failure.provider_request_id,
                             "http_status": failure.http_status,
                         }
                     )
                     if output is not None:
                         attempt["usage"] = output.usage
+                        attempt["provider_fingerprint"] = output.provider_fingerprint
                 finally:
                     attempt["duration_ms"] = int((time.monotonic() - started) * 1000)
                     report["calls_used"] = calls_used
@@ -525,7 +540,11 @@ async def run_comparison(settings: Settings, args) -> dict:
             for attempt in row["attempts"]:
                 if attempt["status"] == "dispatched":
                     attempt["status"], attempt["error_code"] = "unknown", "comparison_interrupted"
-            if row["status"] == "pending" and row["attempts"]:
+            if (
+                row["attempts"]
+                and row["attempts"][-1]["error_code"] == "comparison_interrupted"
+                and row["status"] not in {"assessed", "abstained"}
+            ):
                 row["status"], row["error_code"] = "interrupted", "comparison_interrupted"
         report["calls_used"] = calls_used
         report["finished_at"] = datetime.now(UTC).isoformat()

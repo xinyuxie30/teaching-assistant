@@ -9,6 +9,7 @@ from pydantic import ValidationError
 from sqlalchemy import select
 from sqlalchemy.dialects.postgresql import insert
 
+from teaching_assistant.agent.worker import AgentWorker
 from teaching_assistant.db import Database, Teacher
 from teaching_assistant.domain import DomainError, text_digest
 from teaching_assistant.profiles import ProfileRegistry
@@ -48,8 +49,12 @@ async def run(args) -> None:
     try:
         if args.command == "bootstrap":
             print(json.dumps(await bootstrap(db, settings, args.name), ensure_ascii=False))
-        elif args.command == "worker":
-            worker = Worker(db, settings)
+        elif args.command in {"worker", "agent-worker"}:
+            worker = (
+                AgentWorker(db, settings)
+                if args.command == "agent-worker"
+                else Worker(db, settings)
+            )
             if args.once:
                 print(json.dumps({"processed": await worker.run_once()}))
             elif args.drain:
@@ -88,6 +93,10 @@ def main():
     mode = worker.add_mutually_exclusive_group()
     mode.add_argument("--once", action="store_true")
     mode.add_argument("--drain", action="store_true")
+    agent_worker = commands.add_parser("agent-worker", help="Run durable rubric-drafting agents")
+    agent_mode = agent_worker.add_mutually_exclusive_group()
+    agent_mode.add_argument("--once", action="store_true")
+    agent_mode.add_argument("--drain", action="store_true")
     demo_parser = commands.add_parser(
         "demo", help="Run synthetic API → worker → review → export flow"
     )
@@ -108,7 +117,11 @@ def main():
     compare.add_argument("--severe-error-points", type=Decimal)
     compare.add_argument("--input-usd-per-million", type=Decimal)
     compare.add_argument("--output-usd-per-million", type=Decimal)
+    compare.add_argument("--cached-input-usd-per-million", type=Decimal)
     compare.add_argument("--price-source")
+    compare.add_argument(
+        "--pricing-file", help="JSON prices keyed by selected real profile alias or ID"
+    )
     compare.add_argument("--dry-run", action="store_true")
     args = parser.parse_args()
     logging.basicConfig(level=logging.INFO, format="%(message)s")

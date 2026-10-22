@@ -1,8 +1,6 @@
 """TypeSafe System One / Score adapter. One HTTP request, zero hidden retries."""
 
 import json
-from datetime import UTC, datetime
-from email.utils import parsedate_to_datetime
 
 import httpx
 from pydantic import BaseModel, ConfigDict, Field, ValidationError
@@ -15,7 +13,8 @@ from teaching_assistant.domain import (
     candidate,
     digest,
 )
-from teaching_assistant.profiles import JEV_ADAPTER_VERSION, JEV_INSTRUCTIONS, Profile
+from teaching_assistant.model_http import retry_after
+from teaching_assistant.profiles import JEV_ADAPTER_VERSION, Profile
 from teaching_assistant.settings import Settings
 
 
@@ -38,22 +37,6 @@ class _Response(BaseModel):
     model_config = ConfigDict(extra="ignore")
     model: str
     answers: dict[str, _Score]
-
-
-def retry_after(value: str | None) -> int | None:
-    if not value:
-        return None
-    try:
-        seconds = int(value)
-    except ValueError:
-        try:
-            when = parsedate_to_datetime(value)
-            if when.tzinfo is None:
-                when = when.replace(tzinfo=UTC)
-            seconds = int((when - datetime.now(UTC)).total_seconds()) + 1
-        except (ValueError, TypeError, OverflowError):
-            return None
-    return max(0, min(seconds, 3600))
 
 
 class JevEvaluator:
@@ -84,7 +67,7 @@ class JevEvaluator:
                 "criterion": {
                     "type": "score",
                     "instructions": {
-                        "task": JEV_INSTRUCTIONS,
+                        "task": self.profile.manifest["instructions"],
                         "teacher_rules": request.global_instructions,
                         "criterion": request.criterion.description,
                     },
@@ -114,8 +97,10 @@ class JevEvaluator:
                 timeout=self.profile.manifest["call_timeout_seconds"],
                 follow_redirects=False,
             ) as response:
-                request_id = response.headers.get("x-request-id") or response.headers.get(
-                    "request-id"
+                request_id = (
+                    response.headers.get("x-typesafe-request-id")
+                    or response.headers.get("x-request-id")
+                    or response.headers.get("request-id")
                 )
                 request_id = request_id[:255] if request_id else None
                 status = response.status_code
@@ -178,8 +163,9 @@ class JevEvaluator:
         if self.client is not None:
             raw, request_id, status = await self._post(self.client, payload)
         else:
+            # Explicit proxy wins over the process environment; default transport has zero retries.
             async with httpx.AsyncClient(
-                transport=httpx.AsyncHTTPTransport(retries=0), follow_redirects=False
+                proxy=self.settings.jev_proxy, follow_redirects=False
             ) as client:
                 raw, request_id, status = await self._post(client, payload)
         usage = None

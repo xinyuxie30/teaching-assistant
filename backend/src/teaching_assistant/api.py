@@ -10,8 +10,10 @@ from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 from sqlalchemy import select, text
 
 from teaching_assistant import service
+from teaching_assistant.agent.api import router as agent_router
 from teaching_assistant.db import Database, ExportSnapshot, Teacher
 from teaching_assistant.domain import DomainError, text_digest
+from teaching_assistant.execution_trace import item_trace
 from teaching_assistant.listing_api import create_listing_router
 from teaching_assistant.profiles import ProfileRegistry
 from teaching_assistant.schemas import (
@@ -44,7 +46,7 @@ def create_app(settings: Settings | None = None, database: Database | None = Non
 
     app = FastAPI(
         title="教学助手 · 最小批改后端",
-        description="支持模拟评分与显式选择的 Jev 评分配置；所有结果均需老师复核。",
+        description="支持模拟、Jev 与 DeepSeek 评分配置；所有结果均需老师复核。",
         version="0.1.0",
         lifespan=lifespan,
     )
@@ -74,6 +76,7 @@ def create_app(settings: Settings | None = None, database: Database | None = Non
     TeacherID = Annotated[UUID, Depends(identity)]
     IdempotencyKey = Annotated[str, Header(alias="Idempotency-Key", min_length=1, max_length=120)]
     app.include_router(create_listing_router(db, identity))
+    app.include_router(agent_router(db, identity, config))
 
     async def write(teacher, key, scope, data, action, *, snapshot=False):
         return await service.write_operation(
@@ -188,6 +191,11 @@ def create_app(settings: Settings | None = None, database: Database | None = Non
     async def get_item(item_id: UUID, teacher: TeacherID):
         async with db.snapshot_sessions.begin() as session:
             return await service.item_view(session, teacher, item_id)
+
+    @app.get("/v1/grading-items/{item_id}/trace")
+    async def get_item_trace(item_id: UUID, teacher: TeacherID):
+        async with db.snapshot_sessions.begin() as session:
+            return await item_trace(session, teacher, item_id)
 
     @app.post("/v1/grading-items/{item_id}/reviews")
     async def review(item_id: UUID, data: ReviewInput, teacher: TeacherID, key: IdempotencyKey):

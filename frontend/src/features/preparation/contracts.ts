@@ -136,3 +136,75 @@ export function importForCommit(payload: ImportPayload, preview?: PreviewGate): 
   return JSON.parse(preview.body) as ImportPayload;
 }
 export const formErrors = (error: unknown) => error instanceof Error ? error.message.split("\n") : ["请检查填写内容。"];
+
+/** RFC 4180 subset: quoted fields, doubled quotes, CRLF/LF, UTF-8 BOM. */
+export function parseCsv(text: string): string[][] {
+  const input = text.replace(/^\uFEFF/, "");
+  const rows: string[][] = [];
+  let row: string[] = [];
+  let field = "";
+  let quoted = false;
+  for (let index = 0; index < input.length; index += 1) {
+    const character = input[index];
+    if (quoted) {
+      if (character === '"') {
+        if (input[index + 1] === '"') { field += '"'; index += 1; continue; }
+        quoted = false; continue;
+      }
+      field += character; continue;
+    }
+    if (character === '"') {
+      if (field.length) throw new Error("CSV 的引号必须出现在字段开头。");
+      quoted = true; continue;
+    }
+    if (character === ",") { row.push(field); field = ""; continue; }
+    if (character === "\r" || character === "\n") {
+      if (character === "\r" && input[index + 1] === "\n") index += 1;
+      row.push(field); rows.push(row); row = []; field = ""; continue;
+    }
+    field += character;
+  }
+  if (quoted) throw new Error("CSV 中存在未闭合的引号。");
+  if (field.length || row.length) { row.push(field); rows.push(row); }
+  while (rows.length && rows[rows.length - 1].every((value) => value.trim() === "")) rows.pop();
+  return rows;
+}
+
+export function csvImport(text: string, roster: RosterStudent[], questionId: string): ImportPayload {
+  if (!text.trim()) throw new Error("请粘贴 CSV 内容或选择文件。");
+  const rows = parseCsv(text);
+  if (rows.length < 2) throw new Error("CSV 需包含表头和至少一行答案。");
+  const allowed = ["external_student_id", "answer_text", "external_submission_id", "source_revision"];
+  const columns: Record<string, number> = {};
+  rows[0].forEach((value, index) => {
+    const name = value.trim();
+    if (!allowed.includes(name)) {
+      throw new Error(`第 ${index + 1} 列表头“${name}”无法识别；可用列：${allowed.join("、")}。`);
+    }
+    if (name in columns) throw new Error(`表头“${name}”重复。`);
+    columns[name] = index;
+  });
+  if (!("external_student_id" in columns) || !("answer_text" in columns)) {
+    throw new Error("表头必须包含 external_student_id 和 answer_text。");
+  }
+  const students = new Map(roster.map((student) => [student.external_id, student]));
+  const entries = rows.slice(1).map((values, offset) => {
+    const line = offset + 2;
+    const cell = (name: string) => (columns[name] === undefined ? undefined : (values[columns[name]] ?? "").trim());
+    if (values.every((value) => value.trim() === "")) throw new Error(`第 ${line} 行为空行，请删除后重试。`);
+    const externalId = cell("external_student_id");
+    const student = externalId ? students.get(externalId) : undefined;
+    if (!student) throw new Error(`第 ${line} 行：学号不在当前作业的固定名单中。`);
+    const sourceRevision = "source_revision" in columns ? cell("source_revision") : "initial";
+    if (!sourceRevision) throw new Error(`第 ${line} 行：提交版本不能为空。`);
+    const submission = "external_submission_id" in columns ? cell("external_submission_id") : undefined;
+    return {
+      key: String(offset),
+      student_id: student.id,
+      external_submission_id: submission || submissionId(student),
+      source_revision: sourceRevision,
+      answer_text: values[columns.answer_text] ?? "",
+    };
+  });
+  return manualImport(entries, roster, questionId);
+}

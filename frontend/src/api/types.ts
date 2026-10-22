@@ -171,3 +171,43 @@ export interface EvaluationProfile {
 }
 export interface ProfileList { items: EvaluationProfile[]; default_alias: string }
 export interface BatchReceipt { id: string; item_ids: string[]; evaluation_profile: string }
+
+export type AgentStatus = "queued" | "running" | "waiting_teacher" | "completed" | "failed" | "cancelled";
+export interface AgentProfile {
+  alias: "fake-rubric-agent-v1" | "deepseek-rubric-agent-v1";
+  id: string | null;
+  ready: boolean;
+  manifest?: { provider: string; model: string; revision?: string; call_timeout_seconds?: number };
+}
+export interface AgentProfileList { items: AgentProfile[]; default_alias: string }
+export interface AgentLimits {
+  max_model_calls: number; max_tool_calls: number;
+  max_context_characters: number; max_seconds: number;
+}
+export interface AgentRun {
+  id: string;
+  question_version_id: string;
+  status: AgentStatus;
+  error_code: string | null;
+  draft_id: string | null;
+  waiting_for: string | null;
+  profile_id: string;
+  manifest: { provider: string; model: string; revision?: string };
+  simulation: boolean;
+  limits: AgentLimits;
+  models_used: number;
+  tools_used: number;
+  attempts: number;
+  epoch: number;
+  event_sequence: number;
+  expires_at: string;
+  created_at: string;
+}
+export interface AgentEvent {
+  sequence: number;
+  epoch: number;
+  kind: string;
+  body: Record<string, unknown>;
+  created_at: string;
+}
+export interface AgentEventPage { items: AgentEvent[]; next_after: number; has_more: boolean }

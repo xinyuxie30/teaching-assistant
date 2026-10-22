@@ -111,12 +111,14 @@ jobs:
           api_pid=$!
           .venv/bin/teaching-assistant worker > .local/e2e/worker.log 2>&1 &
           worker_pid=$!
+          .venv/bin/teaching-assistant agent-worker > .local/e2e/agent-worker.log 2>&1 &
+          agent_pid=$!
           (cd frontend && exec node node_modules/vite/bin/vite.js --host 127.0.0.1) > .local/e2e/frontend.log 2>&1 &
           frontend_pid=$!
-          trap 'kill "$api_pid" "$worker_pid" "$frontend_pid" 2>/dev/null || true' EXIT
+          trap 'kill "$api_pid" "$worker_pid" "$agent_pid" "$frontend_pid" 2>/dev/null || true' EXIT
           ready=0
           for attempt in {1..60}; do
-            if ! kill -0 "$api_pid" "$worker_pid" "$frontend_pid" 2>/dev/null; then
+            if ! kill -0 "$api_pid" "$worker_pid" "$agent_pid" "$frontend_pid" 2>/dev/null; then
               echo "A service stopped before becoming ready; see the saved service logs."
               exit 1
             fi

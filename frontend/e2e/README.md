@@ -2,7 +2,7 @@
 
 最新增量（2026-10-22）：Agent 流程已扩展为“原稿 → 老师反馈 → 新版 → 独立确认”，检查来源和意见、原稿保留，以及桌面与 390 px 界面。运行前应用迁移到 `0006`；复验时在全新库 `teaching_ci_test` 上按 CI 命令跑通，本机业务库也已备份后升级。结果见 [修订交付](../../docs/AGENT_REVISION_2026-10-22.md) 与 [审查与复验](../../docs/AGENT_REVISION_REVIEW_2026-10-22.md)，下方保留原始建立记录。
 
-复验执行：**1 passed，7/7 阶段，0 浏览器错误，21.7 秒**（全新库、CI 固定令牌、`npm --prefix frontend/e2e test`）。CI 运行 #39734792943（提交 `8f39252`）的 backend / frontend / browser 三个 job 全部通过，browser 已实际执行修订流程。此前两次 browser 失败均为“响应已到、React 尚未提交状态”的测试竞态：确认细则后过早点击固定按钮、预览后过早点击导入；已分别等待“固定版本”标签与 `.import-preview`，本地连续两轮通过。详见复验记录。
+复验执行：**1 passed，7/7 阶段，0 浏览器错误，21.7 秒**（全新库、CI 固定令牌、`npm --prefix frontend/e2e test`）。CI 运行 #39734792943（提交 `8f39252`）的 backend / frontend / browser 三个 job 全部通过，browser 已实际执行修订流程。此前三次 browser 失败均为“异步渲染尚未稳定”的测试竞态：确认细则后过早点击固定按钮、预览后过早点击导入、以及按钮可访问名/坐标点击偶发解析不到。前两处改为等待界面状态，第三处改用 DOM 文本定位并在节点上 `click()`；清理探针后连续 6 轮 Chromium 通过。详见复验记录。
 
 本轮最终执行：**1 passed，7/7 阶段，0 浏览器错误，15.78 秒**；Node 24.16.0、Chrome 156.0.8078.47。机器记录及截图位于 [workflow-9708cf56…](../../.local/e2e/workflow-9708cf56-36d3-493a-95ed-909e004e9b62/result.json)，测试结束已清理临时 schema 和服务。
 

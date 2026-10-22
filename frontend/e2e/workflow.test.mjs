@@ -53,7 +53,22 @@ test("one synthetic assignment: preparation, fake evaluation, review and both ex
       await route.abort("blockedbyclient");
     } else await route.continue();
   });
-  const click = (name) => page.getByRole("button", { name, exact: true }).click();
+  // Layout changes from async data can move a button between the hit check and the click,
+  // so dispatch the click on the node itself; business state is still asserted separately.
+  const click = async (name) => {
+    const button = page.locator("button").filter({ hasText: name }).first();
+    await button.waitFor({ state: "visible" });
+    const text = (await button.textContent() || "").replace(/\s+/g, "");
+    if (text !== name.replace(/\s+/g, "")) throw new Error(`Unexpected button for ${name}: ${text}`);
+    const deadline = Date.now() + 15_000;
+    while (!(await button.isEnabled())) {
+      if (Date.now() > deadline) throw new Error(`Button stayed disabled: ${name}`);
+      await page.waitForTimeout(100);
+    }
+    // Layout changes from async data can move a button between the hit check and the click,
+    // so dispatch the click on the node itself; business state is still asserted separately.
+    await button.evaluate((node) => node.click());
+  };
   const fill = (label, value) => page.getByLabel(label, { exact: true }).fill(value);
   const post = (path, action) => postAction(page, config.origin, path, action);
   const get = (path) => readJson(context, config, path);

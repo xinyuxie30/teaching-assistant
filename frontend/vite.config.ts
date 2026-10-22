@@ -17,4 +17,18 @@ export default defineConfig({
   plugins: [react()],
   server: { host: "127.0.0.1", port: 5173, strictPort: true, proxy },
   preview: { host: "127.0.0.1", port: 4173, strictPort: true, proxy },
+  build: {
+    // The antd vendor chunk is intentionally isolated and long-lived in the browser cache.
+    chunkSizeWarningLimit: 800,
+    rolldownOptions: {
+      output: {
+        codeSplitting: {
+          groups: [
+            { name: "react", test: /node_modules[\\/](react|react-dom|scheduler)[\\/]/ },
+            { name: "antd", test: /node_modules[\\/](antd|@ant-design|@rc-component|rc-[^\\/]+)[\\/]/ },
+          ],
+        },
+      },
+    },
+  },
 });

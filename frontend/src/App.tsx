@@ -3,12 +3,12 @@ import { lazy, Suspense, useCallback, useEffect, useRef, useState, useSyncExtern
 import { ApiClient } from "./api/client";
 import { ErrorNotice, Loading } from "./components/common";
 import { BatchList } from "./features/assignments/BatchList";
-import { BatchWorkspace } from "./features/assignments/BatchWorkspace";
-import { ReviewPage } from "./features/review/ReviewPage";
 import type { SavedDraft } from "./features/review/ReviewPage";
 import { PreparationSession } from "./features/preparation/session";
 
 const PreparationPage = lazy(() => import("./features/preparation/PreparationPage").then((module) => ({ default: module.PreparationPage })));
+const BatchWorkspace = lazy(() => import("./features/assignments/BatchWorkspace").then((module) => ({ default: module.BatchWorkspace })));
+const ReviewPage = lazy(() => import("./features/review/ReviewPage").then((module) => ({ default: module.ReviewPage })));
 
 interface Session { api: ApiClient; teacherId: string; identityMode: string }
 type Route = { page: "batches" | "prepare" } | { page: "batch"; batchId: string }

@@ -71,6 +71,13 @@ export function agentActive(run?: Pick<AgentRun, "status"> | null): boolean {
   return run?.status === "queued" || run?.status === "running";
 }
 
+/** On a fresh page session, prefer work the teacher can act on over a newer dead run. */
+export function preferredRun<T extends Pick<AgentRun, "status">>(runs: T[]): T | undefined {
+  return runs.find((run) => run.status === "waiting_teacher")
+    ?? runs.find((run) => agentActive(run))
+    ?? runs[0];
+}
+
 export function agentBudget(run: AgentRun): string {
   return `模型 ${run.models_used}/${run.limits.max_model_calls} · 工具 ${run.tools_used}/${run.limits.max_tool_calls}`;
 }

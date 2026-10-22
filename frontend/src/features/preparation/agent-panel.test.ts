@@ -203,7 +203,9 @@ it("restores a revision's provenance and opens the original and new drafts separ
 it("allows a new revision from a completed draft and keeps feedback scoped to its source", async () => {
   const completed = { ...revision, status: "completed" as const };
   serve(() => [completed, record]);
-  await render(new ApiClient("test"));
+  const store = new PreparationSession();
+  store.set("agent:question-1", { runId: "revised-run" }, false);
+  await render(new ApiClient("test"), store);
   await fillFeedback("修改已确认草稿的下一版");
   const select = container.querySelector("#agent-history-question-1") as HTMLSelectElement;
   await act(async () => { select.value = "saved-run"; select.dispatchEvent(new Event("change", { bubbles: true })); });
@@ -211,4 +213,31 @@ it("allows a new revision from a completed draft and keeps feedback scoped to it
   await act(async () => { select.value = "revised-run"; select.dispatchEvent(new Event("change", { bubbles: true })); });
   expect((container.querySelector("#agent-feedback-question-1") as HTMLTextAreaElement).value).toBe("修改已确认草稿的下一版");
   expect(button("按修改意见生成新版").disabled).toBe(false);
+});
+
+it("keeps drafting available when the task history cannot be read", async () => {
+  const fetch = vi.fn(async (path: string) => {
+    const url = new URL(path, window.location.origin);
+    if (url.pathname === "/v1/agent-profiles") {
+      return response({ default_alias: "fake-rubric-agent-v1", items: [
+        { alias: "fake-rubric-agent-v1", id: "agent-fake", ready: true, manifest: record.manifest },
+      ] });
+    }
+    if (url.pathname === "/v1/agent-runs") {
+      return new Response(JSON.stringify({ code: "http_500" }), { status: 500 });
+    }
+    throw new Error(`Unexpected read: ${path}`);
+  });
+  vi.stubGlobal("fetch", fetch);
+  await render(new ApiClient("test"));
+  expect(button("开始起草").disabled).toBe(false);
+});
+
+it("restores an earlier waiting task instead of a newer cancelled one", async () => {
+  const waiting = { ...record, id: "waiting-run", created_at: "2026-10-22T02:00:00Z" };
+  const cancelled = { ...record, id: "cancelled-run", status: "cancelled" as const,
+    draft_id: null, created_at: "2026-10-22T02:10:00Z" };
+  serve(() => [cancelled, waiting]);
+  await render(new ApiClient("test"));
+  expect((container.querySelector("#agent-history-question-1") as HTMLSelectElement).value).toBe("waiting-run");
 });

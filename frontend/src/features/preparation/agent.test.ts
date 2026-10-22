@@ -2,7 +2,7 @@ import { describe, expect, it } from "vitest";
 import type { AgentRun } from "../../api/types";
 import {
   agentActive, agentBudget, agentErrorText, agentEventDetail, agentEventText,
-  agentStatusColor, agentStatusText,
+  agentStatusColor, agentStatusText, preferredRun,
 } from "./agent";
 
 const run = (overrides: Partial<AgentRun> = {}): AgentRun => ({
@@ -44,6 +44,16 @@ describe("agent status", () => {
 
   it("summarizes the budget actually consumed", () => {
     expect(agentBudget(run({ models_used: 3, tools_used: 4 }))).toBe("模型 3/6 · 工具 4/10");
+  });
+
+  it("prefers an actionable task over a newer dead one", () => {
+    const waiting = run({ id: "waiting", status: "waiting_teacher" });
+    const running = run({ id: "running", status: "running" });
+    const failed = run({ id: "failed", status: "failed" });
+    expect(preferredRun([failed, waiting, running])?.id).toBe("waiting");
+    expect(preferredRun([failed, running])?.id).toBe("running");
+    expect(preferredRun([failed, run({ id: "created", status: "completed" })])?.id).toBe("failed");
+    expect(preferredRun([])).toBeUndefined();
   });
 });
 

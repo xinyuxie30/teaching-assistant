@@ -6,9 +6,9 @@
 
 Python + FastAPI + PostgreSQL + 自研 asyncio Worker。已有列表接口、Jev 与 DeepSeek 适配器代码及小样本对照命令；React 教师工作台覆盖课程名单、作业/题目、细则确认、答案导入、建批次、复核和导出。默认 `fake-v1` 是模拟评估器，不做语义评分；真实模型需显式配置和选择，所有成绩须老师确认。
 
-**2026-10-22 新增评分细则 Agent：读取题目 → 工具调用起草 → 保存草稿 → 等待老师 → 确认后完成。** 参考本机 Claude Code `src` 的工具、Hook、上下文与停止机制，自主实现持久模型循环、预算、取消和恢复。默认模拟器，DeepSeek 显式选用；当前入口是 API 与独立 Worker，尚未接入网页。见 [Agent 使用与验收](docs/RUBRIC_AGENT_2026-10-22.md)。
+**2026-10-22 新增评分细则 Agent：读取题目 → 工具调用起草 → 保存草稿 → 等待老师 → 确认后完成。** 参考本机 Claude Code `src` 的工具、Hook、上下文与停止机制，自主实现持久模型循环、预算、取消和恢复。默认模拟器，DeepSeek 显式选用；作业准备页已有“用 Agent 起草”面板，可查看进度、预算、事件与失败原因，打开草稿后仍由老师显式确认。见 [Agent 使用与验收](docs/RUBRIC_AGENT_2026-10-22.md)。
 
-**最新验证：后端 107 项测试全部通过**，Ruff 检查与 50 个文件格式检查通过；`0005` 在独立测试 schema 升级、空表回退再升级及模型一致性检查通过。**真实 DeepSeek 已验证**：`deepseek-chat`（实际返回 `deepseek-flash`）的 compare 2/2、评分批次与 Agent 起草均完成，并修复了真实 `tool_calls` 的 `index` 被拒、等级排序指引缺失两个缺陷（见 [真实验证记录](.local/e2e/real-deepseek-verification-2026-10-22.md)）。`0004` 在含历史数据的测试库上精确回填 4 条指纹。**业务库仍为 `0003`，启用新版服务前必须迁移。** 此前 79 项指纹回归是历史记录，见 [指纹测试](docs/FINGERPRINT_VERIFICATION_2026-10-22.md)。
+**最新验证（2026-10-22 审查修复后）：后端 110 项测试全部通过**，Ruff 检查与 51 个文件格式检查通过；前端 34 项 Vitest、`tsc` 与 `vite build` 通过；浏览器回归 7/7 断言阶段、0 浏览器错误，覆盖 Agent 起草 → 等待老师 → 确认完成。业务库已从 `0003` 升级到 `0005`（升级前备份 `.local/backups/teaching-before-0005.dump`），演示链路在真实库上重新跑通。**真实 DeepSeek 已验证**：`deepseek-chat`（实际返回 `deepseek-flash`）的 compare 2/2、评分批次与 Agent 起草均完成，并修复了真实 `tool_calls` 的 `index` 被拒、等级排序指引缺失两个缺陷（见 [真实验证记录](.local/e2e/real-deepseek-verification-2026-10-22.md)）。`0004` 在含历史数据的测试库上精确回填 4 条指纹。本轮修复清单见 [审查修复记录](docs/REVIEW_FIXES_2026-10-22.md)。
 
 **2026-10-21 修复前验证记录：** 用户报告记载 **72 项 pytest** 通过，DeepSeek 完整应用链路由本地 HTTP 桩走通，未调用真实 DeepSeek；该结果不覆盖本轮指纹修复。此前导入预览、浏览器回归、Jev 强杀恢复与并发 409 的历史记录见 [修复与验收边界](docs/TEST_REVIEW_2026-10-21.md)。真实教学质量、DeepSeek 供应商行为与费用仍未评测。
 
@@ -22,9 +22,9 @@ npm.cmd ci
 npm.cmd run dev
 ```
 
-打开 [教师工作台](http://127.0.0.1:5173)，输入根目录 `.env` 中的 `TA_DEV_API_TOKEN`。Node 建议使用 CI 固定的 24.16.0，详细说明见 [前端 README](frontend/README.md)。已有 `0003` / `0004` 的数据库需要先执行 `uv run --frozen alembic upgrade head` 升至 `0005`，再启动新版 API/Worker；本轮没有迁移业务库。
+打开 [教师工作台](http://127.0.0.1:5173)，输入根目录 `.env` 中的 `TA_DEV_API_TOKEN`。Node 建议使用 CI 固定的 24.16.0，详细说明见 [前端 README](frontend/README.md)。已有 `0003` / `0004` 的数据库需要先执行 `uv run --frozen alembic upgrade head` 升至 `0005`；本机业务库已于 2026-10-22 升级并留存备份。
 
-侧栏“作业准备”可从新建课程名单开始，完成作业、题目、细则确认、答案导入和建批次；“作业与复核”处理已有批次。导入先支持逐份录入与按学号映射的结构化粘贴，CSV/Excel 文件格式仍待真实样例确定。
+侧栏“作业准备”可从新建课程名单开始，完成作业、题目、细则确认、答案导入和建批次；“作业与复核”处理已有批次。答案导入支持逐份录入、结构化 JSON 粘贴，以及 **CSV 粘贴或选择文件**（UTF-8，首行表头；必填 `external_student_id`、`answer_text`，可选 `external_submission_id`、`source_revision`）。CSV 在浏览器内映射到固定名单，提交时仍由服务器重新校验并原子写入；Excel 文件格式仍待真实样例。
 
 ## 直接查看本机结果
 
@@ -91,7 +91,7 @@ uv run --frozen teaching-assistant bootstrap
 uv run --frozen teaching-assistant demo
 ```
 
-随后按上方命令启动 API 和 Worker。不要使用 `Base.metadata.create_all()` 替代迁移：迁移包含保护固定记录的数据库触发器，以及旧评估配置的兼容记录。
+随后按上方命令启动 API 和 Worker。轮换本机开发令牌时，先修改 `.env` 的 `TA_DEV_API_TOKEN`，再执行 `uv run --frozen teaching-assistant rotate-token`：它替换原老师的令牌摘要而不新建身份，并写入审计事件。不要用重新 `bootstrap` 代替轮换，那会生成第二个老师、看不到原有课程。不要使用 `Base.metadata.create_all()` 替代迁移：迁移包含保护固定记录的数据库触发器，以及旧评估配置的兼容记录。
 
 ### 本机无 Docker 的辅助启动方式
 
@@ -133,7 +133,7 @@ uv run --frozen teaching-assistant demo
 
 JSON 导出包含细则、原答案、引用及复核历史。CSV 是简化成绩表，保留版本、模拟标识、执行状态和复核状态，分别列出建议分数与确认分数；待确认分数留空。
 
-首个 CSV/Excel **导入**格式仍未选定；当前内部 JSON 导入契约可独立使用。
+首个 CSV 导入格式已在页面定义（表头契约见上），但仍建议用真实样例复核；Excel 文件适配继续等待样例。内部 JSON 导入契约可独立使用。
 
 ## 测试记录与运行方式
 
@@ -171,7 +171,7 @@ uv run --frozen pytest -q
 - [profiles.py](backend/src/teaching_assistant/profiles.py)：模型及提示配置的版本化。
 - [listings.py](backend/src/teaching_assistant/listings.py)：列表查询与游标分页。
 - [comparison.py](backend/src/teaching_assistant/comparison.py)：固定小样本对照与报告。
-- [db.py](backend/src/teaching_assistant/db.py)：24 张业务和执行表的模型；迁移见 `backend/migrations`。
+- [db.py](backend/src/teaching_assistant/db.py)：26 张业务和执行表的模型；迁移见 `backend/migrations`。
 - [api.py](backend/src/teaching_assistant/api.py)：API、开发鉴权和导出。
 
 较长远的设计与本次实现需要区分阅读：[长期记忆](docs/PROJECT_MEMORY.md)、[架构审查](docs/ARCHITECTURE_REVIEW.md)、[原实施方案](docs/IMPLEMENTATION_PLAN.md)、[参考审查](docs/REFERENCE_AUDIT.md)。EchoMind 仅用于借鉴部分思路，本工程未迁移其客服 Agent 代码。

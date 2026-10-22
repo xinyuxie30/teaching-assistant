@@ -1,5 +1,7 @@
 # 面向教师的全面教学助手
 
+**最新增量：老师反馈驱动的 Agent 细则修订。** 在已有任务历史与恢复基础上，老师可基于当前草稿提出修改意见，生成独立的新草稿并单独确认；原稿、已确认版本、来源快照与修改意见均保留。后端 **118 passed**、前端 **40 passed**，Ruff、类型、构建及浏览器完整流程通过。新增迁移 **`0006`**，本机业务库已在复验时备份（`.local/backups/teaching-before-0006.dump`）并升级；GitHub Actions 最新提交的 frontend / backend / browser 三个 job 全部通过。详见 [修订交付记录](docs/AGENT_REVISION_2026-10-22.md) 与 [复验记录](docs/AGENT_REVISION_REVIEW_2026-10-22.md)；前阶段的 [任务历史与恢复](docs/AGENT_HISTORY_2026-10-22.md) 保留。
+
 已实现第一条最小后端链路：
 
 **确认评分细则 → 导入文本答案 → 分点评估与证据 → 老师复核 → 固定快照导出。**
@@ -8,7 +10,7 @@ Python + FastAPI + PostgreSQL + 自研 asyncio Worker。已有列表接口、Jev
 
 **2026-10-22 新增评分细则 Agent：读取题目 → 工具调用起草 → 保存草稿 → 等待老师 → 确认后完成。** 参考本机 Claude Code `src` 的工具、Hook、上下文与停止机制，自主实现持久模型循环、预算、取消和恢复。默认模拟器，DeepSeek 显式选用；作业准备页已有“用 Agent 起草”面板，可查看进度、预算、事件与失败原因，打开草稿后仍由老师显式确认。见 [Agent 使用与验收](docs/RUBRIC_AGENT_2026-10-22.md)。
 
-**最新验证（2026-10-22 审查修复后）：后端 110 项测试全部通过**，Ruff 检查与 51 个文件格式检查通过；前端 34 项 Vitest、`tsc` 与 `vite build` 通过；浏览器回归 7/7 断言阶段、0 浏览器错误，覆盖 Agent 起草 → 等待老师 → 确认完成。业务库已从 `0003` 升级到 `0005`（升级前备份 `.local/backups/teaching-before-0005.dump`），演示链路在真实库上重新跑通。**真实 DeepSeek 已验证**：`deepseek-chat`（实际返回 `deepseek-flash`）的 compare 2/2、评分批次与 Agent 起草均完成，并修复了真实 `tool_calls` 的 `index` 被拒、等级排序指引缺失两个缺陷（见 [真实验证记录](.local/e2e/real-deepseek-verification-2026-10-22.md)）。`0004` 在含历史数据的测试库上精确回填 4 条指纹。本轮修复清单见 [审查修复记录](docs/REVIEW_FIXES_2026-10-22.md)。
+**前阶段验证（2026-10-22 审查修复后）：后端 110 项测试全部通过**，Ruff 检查与 51 个文件格式检查通过；前端 34 项 Vitest、`tsc` 与 `vite build` 通过；浏览器回归 7/7 断言阶段、0 浏览器错误，覆盖 Agent 起草 → 等待老师 → 确认完成。业务库已从 `0003` 升级到 `0005`（升级前备份 `.local/backups/teaching-before-0005.dump`），演示链路在真实库上重新跑通。**真实 DeepSeek 已验证**：`deepseek-chat`（实际返回 `deepseek-flash`）的 compare 2/2、评分批次与 Agent 起草均完成，并修复了真实 `tool_calls` 的 `index` 被拒、等级排序指引缺失两个缺陷（见 [真实验证记录](.local/e2e/real-deepseek-verification-2026-10-22.md)）。`0004` 在含历史数据的测试库上精确回填 4 条指纹。本轮修复清单见 [审查修复记录](docs/REVIEW_FIXES_2026-10-22.md)。
 
 **2026-10-21 修复前验证记录：** 用户报告记载 **72 项 pytest** 通过，DeepSeek 完整应用链路由本地 HTTP 桩走通，未调用真实 DeepSeek；该结果不覆盖本轮指纹修复。此前导入预览、浏览器回归、Jev 强杀恢复与并发 409 的历史记录见 [修复与验收边界](docs/TEST_REVIEW_2026-10-21.md)。真实教学质量、DeepSeek 供应商行为与费用仍未评测。
 
@@ -22,7 +24,7 @@ npm.cmd ci
 npm.cmd run dev
 ```
 
-打开 [教师工作台](http://127.0.0.1:5173)，输入根目录 `.env` 中的 `TA_DEV_API_TOKEN`。Node 建议使用 CI 固定的 24.16.0，详细说明见 [前端 README](frontend/README.md)。已有 `0003` / `0004` 的数据库需要先执行 `uv run --frozen alembic upgrade head` 升至 `0005`；本机业务库已于 2026-10-22 升级并留存备份。
+打开 [教师工作台](http://127.0.0.1:5173)，输入根目录 `.env` 中的 `TA_DEV_API_TOKEN`。Node 建议使用 CI 固定的 24.16.0，详细说明见 [前端 README](frontend/README.md)。已有数据库需要先执行 `uv run --frozen alembic upgrade head` 升至 `0006`，然后重启 API 和 Worker；本机业务库已于 2026-10-22 备份后升级。
 
 侧栏“作业准备”可从新建课程名单开始，完成作业、题目、细则确认、答案导入和建批次；“作业与复核”处理已有批次。答案导入支持逐份录入、结构化 JSON 粘贴，以及 **CSV 粘贴或选择文件**（UTF-8，首行表头；必填 `external_student_id`、`answer_text`，可选 `external_submission_id`、`source_revision`）。CSV 在浏览器内映射到固定名单，提交时仍由服务器重新校验并原子写入；Excel 文件格式仍待真实样例。
 
@@ -73,7 +75,7 @@ uv sync --frozen --python 3.13
 Copy-Item .env.example .env
 ```
 
-将 `.env` 中的 `TA_DEV_API_TOKEN` 改成自选的至少 20 字符令牌。开发身份通过数据库中保存的令牌哈希绑定老师；不能在请求中传入 `teacher_id` 冒充身份。该入口仅用于本地开发，正式登录、令牌轮换及组织权限尚未实现。
+将 `.env` 中的 `TA_DEV_API_TOKEN` 改成自选的至少 20 字符令牌。开发身份通过数据库中保存的令牌哈希绑定老师；不能在请求中传入 `teacher_id` 冒充身份。该入口仅用于本地开发，已有令牌轮换命令；正式登录及组织权限尚未实现。
 
 2. 启动 PostgreSQL。已有实例时设置 `TA_DATABASE_URL`；有 Docker 时可用：
 
@@ -137,7 +139,7 @@ JSON 导出包含细则、原答案、引用及复核历史。CSV 是简化成�
 
 ## 测试记录与运行方式
 
-用户报告已完成 C 阶段的本机测试。此次按审查结果修改代码、回归用例与说明，没有执行以下命令；修复后测试仍交由用户运行：
+用户后续已授权执行验证。最新实际结果见本文顶部及对应交付记录；可用以下命令在专用测试环境复跑，`alembic check` 会读取当前 `TA_DATABASE_URL` 指向的数据库：
 
 ```powershell
 uv run --frozen ruff check backend

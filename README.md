@@ -1,6 +1,6 @@
 # 面向教师的全面教学助手
 
-**最新增量：老师反馈驱动的 Agent 细则修订。** 在已有任务历史与恢复基础上，老师可基于当前草稿提出修改意见，生成独立的新草稿并单独确认；原稿、已确认版本、来源快照与修改意见均保留。后端 **118 passed**、前端 **40 passed**，Ruff、类型、构建及浏览器完整流程通过。新增迁移 **`0006`**，本机业务库已在复验时备份（`.local/backups/teaching-before-0006.dump`）并升级；GitHub Actions 最新提交的 frontend / backend / browser 三个 job 全部通过。详见 [修订交付记录](docs/AGENT_REVISION_2026-10-22.md) 与 [复验记录](docs/AGENT_REVISION_REVIEW_2026-10-22.md)；前阶段的 [任务历史与恢复](docs/AGENT_HISTORY_2026-10-22.md) 保留。
+**最新增量：老师反馈驱动的 Agent 细则修订。** 在已有任务历史与恢复基础上，老师可基于当前草稿提出修改意见，生成独立的新草稿并单独确认；原稿、已确认版本、来源快照与修改意见均保留。后端 **118 passed**、前端 **40 passed**，Ruff、类型、构建及浏览器完整流程通过。新增迁移 **`0006`**，本机业务库已在复验时备份（`.local/backups/teaching-before-0006.dump`）并升级；GitHub Actions 最新提交的 frontend / backend / browser 三个 job 全部通过。真实 DeepSeek 单题修订也已跑通（2 次调用、草稿 2 点满分 10.00），但仍无教师标注与单价。详见 [修订交付记录](docs/AGENT_REVISION_2026-10-22.md) 与 [复验记录](docs/AGENT_REVISION_REVIEW_2026-10-22.md)；前阶段的 [任务历史与恢复](docs/AGENT_HISTORY_2026-10-22.md) 保留。
 
 已实现第一条最小后端链路：
 

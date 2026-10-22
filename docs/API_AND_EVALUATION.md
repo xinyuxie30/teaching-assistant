@@ -6,7 +6,7 @@
 
 鉴权、写操作和从空环境启动方式见 [根 README](../README.md)。以下路径均使用 `GET /v1` 前缀，按当前老师授权范围查询，不调用模型。
 
-列表返回 `items / total / limit / has_more / next_cursor`，以创建时间及 ID 倒序分页。通用参数为 `limit / cursor / created_from / created_to`；时间需要带时区。继续下一页时保留原筛选，改变筛选后从第一页开始；游标不可跨老师、对象范围或筛选条件复用。
+列表返回 `items / total / limit / has_more / next_cursor`，以创建时间及 ID 倒序分页。通用参数为 `limit / cursor / created_from / created_to`；时间需要为 ISO 8601 格式并包含偏移量。继续下一页时保留原筛选，改变筛选后从第一页开始；游标不可跨老师、对象范围或筛选条件复用。
 
 | 路径（省略 `/v1`） | 额外筛选 |
 | --- | --- |

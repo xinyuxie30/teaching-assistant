@@ -1,6 +1,6 @@
 # Agent 修订版审查与复验
 
-日期：2026-10-22（Asia/Shanghai）。对象：工作区未提交的“老师反馈驱动修订”增量（[交付说明](AGENT_REVISION_2026-10-22.md)）。本轮做三件事：审查代码、独立复跑、核对 GitHub Actions 的 browser 失败。
+日期：2026-10-22。对象：工作区未提交的“老师反馈驱动修订”增量（[交付说明](AGENT_REVISION_2026-10-22.md)）。本轮做三件事：审查代码、独立复跑、核对 GitHub Actions 的 browser 失败。
 
 ## 一、结论
 
@@ -40,16 +40,32 @@ GitHub 的 browser 失败已定位为一次**定位器等待超时**，不是产
 | `tsc --noEmit` / `vite build` | 通过；入口 22.85 kB，无体积警告 |
 | 全新库 `teaching_ci_test`：`0001 → 0006` | 成功 |
 | CI 同构浏览器回归 | **1 passed，7/7 阶段，0 浏览器错误**（21.7 s） |
+| 真实 DeepSeek 修订 | **completed**；2 次调用、3,081 input / 926 output tokens，草稿 2 点评分、总分 10.00 |
 
 CI 同构 = 新建空库、CI 的固定令牌、`TA_EVALUATOR=fake-v1`、API + 批改 Worker + Agent Worker + Vite、`npm --prefix frontend/e2e test`。唯一差别是本地用 Chrome、CI 用 Chromium。
 
-## 四、业务库升级
+## 四、真实供应商验证（单题）
+
+用浏览器回归里的合成题目和已确认草稿做一次真实修订，验证“来源快照 + 老师意见”在真实供应商下能走完工具循环：
+
+| 项目 | 结果 |
+| --- | --- |
+| 请求 | `deepseek-rubric-agent-v1`，`source_draft_id=240ba962-…`，意见为“细化可观察的作答特征，保留结构与满分” |
+| 任务 | `e70c80e5-3a3e-4d21-bf98-a241bb97e5c7`，2 次调用 / 2 次工具，`waiting_teacher` |
+| 用量 | 第 1 次 1,470 input / 33 output；第 2 次 1,611 input / 893 output；缓存命中 2,432 |
+| 返回模型 | `deepseek-flash`，指纹 `e72d3c7f…`（`deepseek-chat` 别名的实际模型） |
+| 草稿 | 2 个评分点，总分 10.00，未确认；来源草稿保持 1 个评分点 |
+| 确认 | 固定细则第 3 版，任务 `completed` |
+
+边界：题目与来源草稿来自浏览器回归的合成样本，没有教师标注，不能据此评价修订后的教学可用性；未配置单价，费用仍未知。原始记录在 `.local/e2e/real-deepseek-revision-2026-10-22.json`。
+
+## 五、业务库升级
 
 - 备份：`.local/backups/teaching-before-0006.dump`（210 KB）
 - `alembic upgrade head`：`0005 → 0006`；`alembic current = 0006`，`alembic check` 无待生成操作
 - 结构核对：`agent_runs.source_draft_id`、`revision_context` 存在，`ck_agent_revision_source`、`fk_agent_runs_source_draft` 存在；原有 0 条 Agent 任务不受影响
 
-## 五、GitHub browser 失败诊断
+## 六、GitHub browser 失败诊断
 
 失败运行：`checks` #39716914937，提交 `26a404a`，browser job 2 分钟失败。frontend 与 backend 成功；browser 的前 12 步全部成功，失败在第 13 步“运行浏览器工作流”。
 
@@ -67,11 +83,12 @@ CI 同构 = 新建空库、CI 的固定令牌、`TA_EVALUATOR=fake-v1`、API + �
 | #39717023140 | `59fd891` | success（含 browser） |
 | #39717055527 | `5c4a8de` | success |
 | #39717088339 | `e01f1ab` | success |
+| **#39734792943** | **`8f39252`（含本次修订）** | **success：backend / frontend / browser 全部通过** |
 
-判断：这是一次前端渲染/可访问性树与定位器之间的偶发不同步，不是业务缺陷；无法从现有产物进一步定位到单一根因。处置：在点击固定细则按钮前显式等待“固定版本”标签出现，把等待条件从“按钮可点击”改为“确认回执已反映到界面”，失败时能直接看出是回执还是按钮的问题。
+判断：这是一次前端渲染/可访问性树与定位器之间的偶发不同步，不是业务缺陷；无法从现有产物进一步定位到单一根因。处置：在点击固定细则按钮前显式等待“固定版本”标签出现，把等待条件从“按钮可点击”改为“确认回执已反映到界面”，失败时能直接看出是回执还是按钮的问题。加固后的修订提交 `8f39252` 在 CI 中 backend / frontend / browser 三个 job 全部通过（#39734792943），browser 已实际执行“起草 → 反馈修订 → 独立确认”的完整流程。
 
-## 六、仍未闭合
+## 七、仍未闭合
 
-1. 真实 DeepSeek 的“按意见修订”质量、轮次成本与稳定性未评测；本轮只有模拟器与测试桩。
+1. 真实 DeepSeek 已跑通单题修订，但只有一份合成样本，且无单价；修订后的教学可用性、严重偏差与单次成本仍未评测。
 2. 教师标注集、严重误判门槛与单价仍缺。
 3. browser 偶发超时的根因未复现；若再次出现，应先看 `failed.png` 与 `result.json`，不要直接重跑掩盖。

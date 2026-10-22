@@ -4,9 +4,27 @@
 
 **确认评分细则 → 导入文本答案 → 分点评估与证据 → 老师复核 → 固定快照导出。**
 
-Python + FastAPI + PostgreSQL + 自研 asyncio Worker。已补课程到复核项的列表接口、可选的真实 Jev 适配器与小样本对照命令。默认 `fake-v1` 仍是模拟评估器，不做语义评分；Jev 需显式配置和选择，证据由老师补充。所有结果都需老师复核。普通生成式模型与教师网页工作台尚未实现。
+Python + FastAPI + PostgreSQL + 自研 asyncio Worker。已有列表接口、Jev 与 DeepSeek 适配器代码及小样本对照命令；React 教师工作台覆盖课程名单、作业/题目、细则确认、答案导入、建批次、复核和导出。默认 `fake-v1` 是模拟评估器，不做语义评分；真实模型需显式配置和选择，所有成绩须老师确认。
 
-**2026-10-20 更新：本轮按要求只写代码，未运行测试、迁移或真实模型调用。** 使用新版 API/Worker 前先执行 `uv run --frozen alembic upgrade head`；本机数据库尚未应用新增的 `0003`。完整配置、列表参数和对照命令见 [列表与真实模型使用说明](docs/LISTS_AND_MODEL.md)。
+**2026-10-22 新增评分细则 Agent：读取题目 → 工具调用起草 → 保存草稿 → 等待老师 → 确认后完成。** 参考本机 Claude Code `src` 的工具、Hook、上下文与停止机制，自主实现持久模型循环、预算、取消和恢复。默认模拟器，DeepSeek 显式选用；当前入口是 API 与独立 Worker，尚未接入网页。见 [Agent 使用与验收](docs/RUBRIC_AGENT_2026-10-22.md)。
+
+**最新验证：后端 107 项测试全部通过**，Ruff 检查与 50 个文件格式检查通过；`0005` 在独立测试 schema 升级、空表回退再升级及模型一致性检查通过。**真实 DeepSeek 已验证**：`deepseek-chat`（实际返回 `deepseek-flash`）的 compare 2/2、评分批次与 Agent 起草均完成，并修复了真实 `tool_calls` 的 `index` 被拒、等级排序指引缺失两个缺陷（见 [真实验证记录](.local/e2e/real-deepseek-verification-2026-10-22.md)）。`0004` 在含历史数据的测试库上精确回填 4 条指纹。**业务库仍为 `0003`，启用新版服务前必须迁移。** 此前 79 项指纹回归是历史记录，见 [指纹测试](docs/FINGERPRINT_VERIFICATION_2026-10-22.md)。
+
+**2026-10-21 修复前验证记录：** 用户报告记载 **72 项 pytest** 通过，DeepSeek 完整应用链路由本地 HTTP 桩走通，未调用真实 DeepSeek；该结果不覆盖本轮指纹修复。此前导入预览、浏览器回归、Jev 强杀恢复与并发 409 的历史记录见 [修复与验收边界](docs/TEST_REVIEW_2026-10-21.md)。真实教学质量、DeepSeek 供应商行为与费用仍未评测。
+
+## 启动教师工作台
+
+先按下方说明启动已有 API；需要处理待办时再启动 Worker。另开终端：
+
+```powershell
+Set-Location 'D:\PyChram_project\面向教师的全面助手\frontend'
+npm.cmd ci
+npm.cmd run dev
+```
+
+打开 [教师工作台](http://127.0.0.1:5173)，输入根目录 `.env` 中的 `TA_DEV_API_TOKEN`。Node 建议使用 CI 固定的 24.16.0，详细说明见 [前端 README](frontend/README.md)。已有 `0003` / `0004` 的数据库需要先执行 `uv run --frozen alembic upgrade head` 升至 `0005`，再启动新版 API/Worker；本轮没有迁移业务库。
+
+侧栏“作业准备”可从新建课程名单开始，完成作业、题目、细则确认、答案导入和建批次；“作业与复核”处理已有批次。导入先支持逐份录入与按学号映射的结构化粘贴，CSV/Excel 文件格式仍待真实样例确定。
 
 ## 直接查看本机结果
 
@@ -15,7 +33,8 @@ Python + FastAPI + PostgreSQL + 自研 asyncio Worker。已补课程到复核项
 - [完整演示导出](.local/demo-result.json)：2 份答案，1 份模拟老师确认、1 份待复核。
 - [实现状态与边界](docs/IMPLEMENTATION_STATUS.md)：已实现能力、实际验证、后续工作。
 - [演示脚本](backend/src/teaching_assistant/demo.py)：完整 API 请求示例。
-- [列表与模型接入](docs/LISTS_AND_MODEL.md)：本轮新增代码、配置与待验证边界。
+- [当前列表与模型对照](docs/API_AND_EVALUATION.md)：接口、配置和评测边界。
+- [审查与下一阶段计划](docs/REVIEW_AND_NEXT_STEPS_2026-10-20.md)：回归资产收口、教师复核工作台及真实评测的实施顺序。
 
 在项目根目录可以重新运行；同一 `run-id` 复用已有回执和记录：
 
@@ -40,6 +59,8 @@ uv run --frozen teaching-assistant worker
 ```
 
 `worker --once` 领取一份答案；`worker --drain` 处理当前可领取项目后退出，不等待未来的重试到期时间。持续 Worker 才会继续扫描到期重试及失效租约。
+
+评分细则 Agent 使用单独命令 `uv run --frozen teaching-assistant agent-worker`，也支持 `--once / --drain`。通过 `POST /v1/question-versions/{id}/rubric-agent-runs` 创建任务；运行状态、草稿和调用事件的接口见 [Agent 说明](docs/RUBRIC_AGENT_2026-10-22.md)。
 
 ## 从空环境启动
 
@@ -93,6 +114,7 @@ uv run --frozen teaching-assistant demo
 | --- | --- |
 | `POST /v1/workspaces` | 创建课程、班级和学生名单 |
 | `POST /v1/courses/{id}/assignments` | 建作业并固定参与名单 |
+| `GET /v1/assignments/{id}` | 作业、课程/班级信息及作业固定名单 |
 | `POST /v1/assignments/{id}/question-versions` | 创建新的题目版本 |
 | `POST /v1/question-versions/{id}/rubric-drafts` | 保存手动录入的细则草稿 |
 | `POST /v1/rubric-drafts/{id}/confirm` | 确认固定细则版本 |
@@ -107,15 +129,15 @@ uv run --frozen teaching-assistant demo
 | `GET /v1/exports/{id}?format=json\|csv` | 读取固定快照或下载 CSV |
 | `GET /v1/evaluation-profiles` | 查看当前可选配置及具体 ID，不调用模型 |
 
-新增 12 个分页列表接口和 4 个版本详情接口，覆盖课程、班级、学生、作业、题目、细则、答案、导入、批次、复核项与导出。完整路径及筛选参数见 [接口说明](docs/LISTS_AND_MODEL.md#2-列表与详情接口)；待复核查询为 `GET /v1/grading-items?status=succeeded&review_status=pending`。
+新增 12 个分页列表接口和 4 个版本详情接口，覆盖课程、班级、学生、作业、题目、细则、答案、导入、批次、复核项与导出。完整路径及筛选参数见 [接口说明](docs/API_AND_EVALUATION.md#列表与详情接口)；待复核查询为 `GET /v1/grading-items?status=succeeded&review_status=pending`。
 
 JSON 导出包含细则、原答案、引用及复核历史。CSV 是简化成绩表，保留版本、模拟标识、执行状态和复核状态，分别列出建议分数与确认分数；待确认分数留空。
 
 首个 CSV/Excel **导入**格式仍未选定；当前内部 JSON 导入契约可独立使用。
 
-## 由你执行的验证
+## 测试记录与运行方式
 
-本轮没有执行以下命令：
+用户报告已完成 C 阶段的本机测试。此次按审查结果修改代码、回归用例与说明，没有执行以下命令；修复后测试仍交由用户运行：
 
 ```powershell
 uv run --frozen ruff check backend
@@ -134,10 +156,13 @@ uv run --frozen pytest -q
 
 每项测试在专用数据库的随机 schema 中应用真实迁移，结束时仅删除该 schema。未配置测试库时，集成测试会明确跳过，不能把这种结果视为完整验收。
 
-历史 M0 版本曾有 **21 项测试通过**，包含 PostgreSQL 下的去重、导入回滚、权限隔离、并发复核、租约恢复和快照验证。本轮改动尚未重新执行这些测试，也未新增测试覆盖；不能用历史结果推断新增列表、真实适配器及迁移已经验收。没有真实模型质量、性能或生产部署结论。
+此前 [C 阶段记录](docs/ASSIGNMENT_PREPARATION.md#本机验证结果)记载 **42 项 pytest、21 项 Vitest 通过**，包含固定名单、细则/导入契约和未知写操作等用例。修复后实测为后端 **42 项**、前端 **22 项**（新增含冒号的行标识用例），[正式浏览器回归](frontend/e2e/README.md) 已于 2026-10-21 在独立数据库执行通过。前端单测在 `frontend/` 下运行 `npm test`，`npm run build` 包含类型检查；浏览器测试在 `frontend/e2e/` 下独立运行，需专用数据库和服务。历史通过数不能替代本次记录。
+
+最新真实 compare 是 1 份合成答案的 2 个评分点，不构成真实教师标注集上的模型质量对照。费用依据、强制终止、并发负载及人工复核收益仍需后续补齐，详见审查记录。
 
 ## 代码入口
 
+- [前端工程](frontend/README.md)：教师复核工作台、启动方式和用户验收入口。
 - [domain.py](backend/src/teaching_assistant/domain.py)：细则契约、候选等级、Decimal 计分、引用校验。
 - [service.py](backend/src/teaching_assistant/service.py)：授权范围、业务事务、幂等回执、复核、快照。
 - [worker.py](backend/src/teaching_assistant/worker.py)：租约、执行代次、调用预算、检查点和重试。

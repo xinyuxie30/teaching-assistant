@@ -45,6 +45,7 @@ from teaching_assistant.grading_runtime import GRADING_STEPS, GradingRuntime
 from teaching_assistant.profiles import ProfileRegistry
 from teaching_assistant.service import refresh_batches
 from teaching_assistant.settings import Settings
+from teaching_assistant.worker_backoff import failure_delay
 
 logger = logging.getLogger("teaching_assistant.worker")
 
@@ -162,6 +163,10 @@ class Worker:
                 )
                 await session.flush()
                 await refresh_batches(session, item.id)
+                # Batch aggregation can wait behind another transaction. Start the
+                # execution lease only after that wait, while still owning the item.
+                now = await session.scalar(select(func.clock_timestamp()))
+                item.lease_until = now + timedelta(seconds=self.settings.lease_seconds)
                 lease = Lease(item.id, item.epoch, self.worker_id)
             self.log("claimed", lease)
             return lease
@@ -465,11 +470,17 @@ class Worker:
         return True
 
     async def run_forever(self) -> None:
+        failures = 0
         while True:
             try:
                 progressed = await self.run_once()
-            except Exception:
-                logger.exception("worker_iteration_failed")
-                progressed = False
+            except Exception as exc:
+                # Repeated outages must not dump SQL parameters or model/student
+                # payloads into logs. Persisted leases remain the recovery source.
+                logger.error("worker_iteration_failed: %s", type(exc).__name__)
+                failures += 1
+                await asyncio.sleep(failure_delay(self.settings.poll_seconds, failures))
+                continue
+            failures = 0
             if not progressed:
                 await asyncio.sleep(self.settings.poll_seconds)

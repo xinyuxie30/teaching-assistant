@@ -11,6 +11,7 @@ from sqlalchemy import select, text
 
 from teaching_assistant import service
 from teaching_assistant.agent.api import router as agent_router
+from teaching_assistant.class_practice_api import router as class_practice_router
 from teaching_assistant.db import Database, ExportSnapshot, Teacher
 from teaching_assistant.domain import DomainError, text_digest
 from teaching_assistant.execution_trace import item_trace
@@ -29,6 +30,7 @@ from teaching_assistant.schemas import (
     WorkspaceInput,
 )
 from teaching_assistant.settings import Settings
+from teaching_assistant.teaching_memory_api import router as teaching_memory_router
 
 security = HTTPBearer(auto_error=False)
 
@@ -77,6 +79,8 @@ def create_app(settings: Settings | None = None, database: Database | None = Non
     IdempotencyKey = Annotated[str, Header(alias="Idempotency-Key", min_length=1, max_length=120)]
     app.include_router(create_listing_router(db, identity))
     app.include_router(agent_router(db, identity, config))
+    app.include_router(teaching_memory_router(db, identity))
+    app.include_router(class_practice_router(db, identity, config))
 
     async def write(teacher, key, scope, data, action, *, snapshot=False):
         return await service.write_operation(

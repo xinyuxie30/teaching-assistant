@@ -9,6 +9,7 @@ from sqlalchemy import (
     CheckConstraint,
     DateTime,
     ForeignKey,
+    ForeignKeyConstraint,
     Index,
     Integer,
     Numeric,
@@ -47,6 +48,58 @@ class Classroom(Entity, Base):
     __tablename__ = "classrooms"
     course_id: Mapped[UUID] = mapped_column(ForeignKey("courses.id"))
     name: Mapped[str] = mapped_column(String(200))
+
+
+class TeachingMemory(Entity, Base):
+    __tablename__ = "teaching_memories"
+    __table_args__ = (
+        CheckConstraint(
+            "kind IN ('preference','experience','material_reference')", name="ck_memory_kind"
+        ),
+        CheckConstraint(
+            "source_kind IN ('teacher_note','confirmed_agent_artifact') "
+            "AND ((source_kind = 'teacher_note' AND source_artifact_id IS NULL) "
+            "OR (source_kind = 'confirmed_agent_artifact' AND source_artifact_id IS NOT NULL))",
+            name="ck_memory_source",
+        ),
+        CheckConstraint("valid_until IS NULL OR valid_until > valid_from", name="ck_memory_dates"),
+        CheckConstraint(
+            "(revoked_at IS NULL) = (revocation_reason IS NULL)", name="ck_memory_revocation"
+        ),
+        CheckConstraint("supersedes_id IS NULL OR supersedes_id <> id", name="ck_memory_lineage"),
+        Index("ix_teaching_memories_scope", "teacher_id", "course_id", "created_at"),
+    )
+    teacher_id: Mapped[UUID] = mapped_column(ForeignKey("teachers.id"))
+    course_id: Mapped[UUID] = mapped_column(ForeignKey("courses.id"))
+    kind: Mapped[str] = mapped_column(String(24))
+    title: Mapped[str] = mapped_column(String(200))
+    body: Mapped[str] = mapped_column(String(2000))
+    source_kind: Mapped[str] = mapped_column(String(32))
+    source_artifact_id: Mapped[UUID | None] = mapped_column(ForeignKey("agent_artifacts.id"))
+    source: Mapped[dict[str, Any]] = mapped_column(JSONB)
+    content_hash: Mapped[str] = mapped_column(String(64))
+    valid_from: Mapped[datetime] = mapped_column(DateTime(timezone=True))
+    valid_until: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    confirmed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    revoked_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    revocation_reason: Mapped[str | None] = mapped_column(String(500))
+    supersedes_id: Mapped[UUID | None] = mapped_column(ForeignKey("teaching_memories.id"))
+
+
+class PracticeQuestion(Entity, Base):
+    """Teacher-owned, immutable bank entry; confirmation and retirement are explicit."""
+
+    __tablename__ = "practice_questions"
+    __table_args__ = (
+        UniqueConstraint("course_id", "content_hash"),
+        Index("ix_practice_questions_scope", "teacher_id", "course_id", "created_at"),
+    )
+    teacher_id: Mapped[UUID] = mapped_column(ForeignKey("teachers.id"))
+    course_id: Mapped[UUID] = mapped_column(ForeignKey("courses.id"))
+    body: Mapped[dict[str, Any]] = mapped_column(JSONB)
+    content_hash: Mapped[str] = mapped_column(String(64))
+    confirmed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    retired_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
 
 
 class Student(Entity, Base):
@@ -184,17 +237,48 @@ class AgentRun(Entity, Base):
     __tablename__ = "agent_runs"
     __table_args__ = (
         CheckConstraint(
-            "status IN ('queued','running','waiting_teacher','completed','failed','cancelled')"
+            "status IN ('queued','running','waiting_children','waiting_input','waiting_timer','waiting_teacher','completed','failed','cancelled')",
+            name="ck_agent_run_status",
         ),
         CheckConstraint("models_used >= 0 AND tools_used >= 0 AND event_seq >= 0"),
         CheckConstraint(
             "(source_draft_id IS NULL) = (revision_context IS NULL)",
             name="ck_agent_revision_source",
         ),
+        CheckConstraint(
+            "task_type <> 'rubric' OR question_version_id IS NOT NULL",
+            name="ck_agent_rubric_question",
+        ),
+        CheckConstraint(
+            "(parent_run_id IS NULL AND root_run_id IS NULL AND parent_tool_call_id IS NULL AND depth = 0) "
+            "OR (parent_run_id IS NOT NULL AND root_run_id IS NOT NULL AND parent_tool_call_id IS NOT NULL "
+            "AND depth > 0 AND parent_run_id <> id AND root_run_id <> id)",
+            name="ck_agent_tree_shape",
+        ),
+        CheckConstraint(
+            "tree_models_used >= 0 AND tree_tools_used >= 0 AND children_spawned >= 0",
+            name="ck_agent_tree_budget",
+        ),
+        UniqueConstraint("parent_run_id", "parent_tool_call_id", name="uq_agent_child_call"),
         Index("ix_agent_runs_ready", "status", "ready_at", "lease_until"),
     )
     teacher_id: Mapped[UUID] = mapped_column(ForeignKey("teachers.id"), index=True)
-    question_version_id: Mapped[UUID] = mapped_column(ForeignKey("question_versions.id"))
+    question_version_id: Mapped[UUID | None] = mapped_column(ForeignKey("question_versions.id"))
+    task_type: Mapped[str] = mapped_column(String(80), default="rubric", server_default="rubric")
+    task_input: Mapped[dict[str, Any]] = mapped_column(JSONB, default=dict, server_default="{}")
+    task_state: Mapped[dict[str, Any]] = mapped_column(JSONB, default=dict, server_default="{}")
+    parent_run_id: Mapped[UUID | None] = mapped_column(ForeignKey("agent_runs.id"), index=True)
+    root_run_id: Mapped[UUID | None] = mapped_column(ForeignKey("agent_runs.id"), index=True)
+    parent_tool_call_id: Mapped[str | None] = mapped_column(String(120))
+    depth: Mapped[int] = mapped_column(Integer, default=0, server_default="0")
+    tree_models_used: Mapped[int] = mapped_column(Integer, default=0, server_default="0")
+    tree_tools_used: Mapped[int] = mapped_column(Integer, default=0, server_default="0")
+    children_spawned: Mapped[int] = mapped_column(Integer, default=0, server_default="0")
+    resume_pending: Mapped[bool] = mapped_column(Boolean, default=False, server_default="false")
+    wait_state: Mapped[dict[str, Any]] = mapped_column(JSONB, default=dict, server_default="{}")
+    pending_user_messages: Mapped[list[dict[str, Any]]] = mapped_column(
+        JSONB, default=list, server_default="[]"
+    )
     draft_id: Mapped[UUID | None] = mapped_column(ForeignKey("rubric_drafts.id"))
     source_draft_id: Mapped[UUID | None] = mapped_column(ForeignKey("rubric_drafts.id"))
     revision_context: Mapped[dict[str, Any] | None] = mapped_column(JSONB(none_as_null=True))
@@ -219,6 +303,67 @@ class AgentRun(Entity, Base):
     last_error: Mapped[str | None] = mapped_column(String(120))
 
 
+class AgentWait(Entity, Base):
+    """Immutable pause snapshot; its id is the token required for one wake receipt."""
+
+    __tablename__ = "agent_waits"
+    run_id: Mapped[UUID] = mapped_column(ForeignKey("agent_runs.id"), index=True)
+    kind: Mapped[str] = mapped_column(String(24))
+    reason: Mapped[str] = mapped_column(String(1000))
+    wake_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), index=True)
+    snapshot: Mapped[dict[str, Any]] = mapped_column(JSONB)
+    content_hash: Mapped[str] = mapped_column(String(64))
+
+
+class AgentWake(Entity, Base):
+    """One immutable wake or cancellation receipt per pause, shared by API and scanner."""
+
+    __tablename__ = "agent_wakes"
+    wait_id: Mapped[UUID] = mapped_column(ForeignKey("agent_waits.id"), unique=True)
+    source: Mapped[str] = mapped_column(String(24))
+    response: Mapped[str | None] = mapped_column(Text)
+    request_hash: Mapped[str] = mapped_column(String(64))
+
+
+class AgentContextCheckpoint(Entity, Base):
+    __tablename__ = "agent_context_checkpoints"
+    __table_args__ = (UniqueConstraint("run_id", "sequence"),)
+    run_id: Mapped[UUID] = mapped_column(ForeignKey("agent_runs.id"), index=True)
+    sequence: Mapped[int] = mapped_column(Integer)
+    source_hash: Mapped[str] = mapped_column(String(64))
+    messages: Mapped[list[dict[str, Any]]] = mapped_column(JSONB)
+    details: Mapped[dict[str, Any]] = mapped_column(JSONB)
+
+
+class AgentArtifact(Entity, Base):
+    """One immutable proposed artifact per run; confirmation is an explicit teacher operation."""
+
+    __tablename__ = "agent_artifacts"
+    run_id: Mapped[UUID] = mapped_column(ForeignKey("agent_runs.id"), unique=True)
+    kind: Mapped[str] = mapped_column(String(80))
+    body: Mapped[dict[str, Any]] = mapped_column(JSONB)
+    content_hash: Mapped[str] = mapped_column(String(64))
+    confirmed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+
+
+class AgentToolResult(Entity, Base):
+    """Immutable large-result receipts. Reading is confined to the originating run."""
+
+    __tablename__ = "agent_tool_results"
+    __table_args__ = (
+        UniqueConstraint("run_id", "tool_call_id"),
+        CheckConstraint("character_count > 0", name="ck_tool_result_length"),
+    )
+    run_id: Mapped[UUID] = mapped_column(ForeignKey("agent_runs.id"), index=True)
+    teacher_id: Mapped[UUID] = mapped_column(ForeignKey("teachers.id"))
+    tool_call_id: Mapped[str] = mapped_column(String(120))
+    tool_name: Mapped[str] = mapped_column(String(120))
+    arguments_hash: Mapped[str] = mapped_column(String(64))
+    body: Mapped[dict[str, Any]] = mapped_column(JSONB)
+    content_hash: Mapped[str] = mapped_column(String(64))
+    character_count: Mapped[int] = mapped_column(Integer)
+
+
 class AgentEvent(Entity, Base):
     __tablename__ = "agent_events"
     __table_args__ = (UniqueConstraint("run_id", "sequence"),)
@@ -227,6 +372,49 @@ class AgentEvent(Entity, Base):
     epoch: Mapped[int] = mapped_column(Integer)
     kind: Mapped[str] = mapped_column(String(40))
     body: Mapped[dict[str, Any]] = mapped_column(JSONB)
+
+
+class AgentModelReservation(Entity, Base):
+    """Immutable request reservation with one final reported-usage settlement."""
+
+    __tablename__ = "agent_model_reservations"
+    __table_args__ = (
+        UniqueConstraint("run_id", "dispatch_sequence", name="uq_agent_reservation_dispatch"),
+        ForeignKeyConstraint(
+            ["run_id", "dispatch_sequence"],
+            ["agent_events.run_id", "agent_events.sequence"],
+            name="fk_agent_reservation_dispatch",
+        ),
+        CheckConstraint(
+            "reserved_input_tokens >= 0 AND reserved_output_tokens > 0 "
+            "AND (reserved_cost_usd IS NULL OR reserved_cost_usd >= 0)",
+            name="ck_agent_reservation_bounds",
+        ),
+        CheckConstraint(
+            "(settled_at IS NULL AND actual_input_tokens IS NULL AND actual_output_tokens IS NULL "
+            "AND settled_cost_usd IS NULL AND cost_is_exact IS NULL AND usage IS NULL) OR "
+            "(settled_at IS NOT NULL AND actual_input_tokens IS NOT NULL AND actual_output_tokens IS NOT NULL "
+            "AND actual_input_tokens >= 0 AND actual_output_tokens >= 0 "
+            "AND usage IS NOT NULL AND ((settled_cost_usd IS NULL AND cost_is_exact IS NULL) OR "
+            "(settled_cost_usd >= 0 AND cost_is_exact IS NOT NULL)))",
+            name="ck_agent_reservation_settlement",
+        ),
+    )
+    root_run_id: Mapped[UUID] = mapped_column(ForeignKey("agent_runs.id"), index=True)
+    run_id: Mapped[UUID] = mapped_column(ForeignKey("agent_runs.id"), index=True)
+    dispatch_sequence: Mapped[int] = mapped_column(Integer)
+    request_hash: Mapped[str] = mapped_column(String(64))
+    policy_hash: Mapped[str] = mapped_column(String(64))
+    policy: Mapped[dict[str, Any]] = mapped_column(JSONB)
+    reserved_input_tokens: Mapped[int] = mapped_column(Integer)
+    reserved_output_tokens: Mapped[int] = mapped_column(Integer)
+    reserved_cost_usd: Mapped[Decimal | None] = mapped_column(Numeric(24, 12))
+    actual_input_tokens: Mapped[int | None] = mapped_column(Integer)
+    actual_output_tokens: Mapped[int | None] = mapped_column(Integer)
+    settled_cost_usd: Mapped[Decimal | None] = mapped_column(Numeric(24, 12))
+    cost_is_exact: Mapped[bool | None] = mapped_column(Boolean)
+    usage: Mapped[dict[str, Any] | None] = mapped_column(JSONB(none_as_null=True))
+    settled_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
 
 
 class BatchItem(Base):

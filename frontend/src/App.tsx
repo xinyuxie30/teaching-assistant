@@ -9,10 +9,11 @@ import { PreparationSession } from "./features/preparation/session";
 const PreparationPage = lazy(() => import("./features/preparation/PreparationPage").then((module) => ({ default: module.PreparationPage })));
 const BatchWorkspace = lazy(() => import("./features/assignments/BatchWorkspace").then((module) => ({ default: module.BatchWorkspace })));
 const ReviewPage = lazy(() => import("./features/review/ReviewPage").then((module) => ({ default: module.ReviewPage })));
+const PracticePage = lazy(() => import("./features/practice/PracticePage").then((module) => ({ default: module.PracticePage })));
 
 interface Session { api: ApiClient; teacherId: string; identityMode: string }
-type Route = { page: "batches" | "prepare" } | { page: "batch"; batchId: string }
-  | { page: "review"; batchId: string; itemId: string };
+type Route = { page: "batches" | "prepare" | "practice" } | { page: "batch"; batchId: string; tab?: string }
+  | { page: "review"; batchId: string; itemId: string; returnTab?: string };
 
 function Connect({ onConnected }: { onConnected: (session: Session) => void }) {
   const [token, setToken] = useState("");
@@ -111,30 +112,34 @@ export function App() {
       <button className={`nav-item ${route.page === "prepare" ? "selected" : ""}`} onClick={() => navigate({ page: "prepare" })}>
         <span aria-hidden="true">＋</span>作业准备
       </button>
-      <button className={`nav-item ${route.page !== "prepare" ? "selected" : ""}`} onClick={() => navigate({ page: "batches" })}>
+      <button className={`nav-item ${["batches", "batch", "review"].includes(route.page) ? "selected" : ""}`} onClick={() => navigate({ page: "batches" })}>
         <span aria-hidden="true">▤</span>作业与复核
+      </button>
+      <button className={`nav-item ${route.page === "practice" ? "selected" : ""}`} onClick={() => navigate({ page: "practice" })}>
+        <span aria-hidden="true">◎</span>针对性补练
       </button>
       <div className="sidebar-note"><span className="status-dot" />固定规则 · 老师确认</div>
     </aside>
     <div className="main-area">
       <header className="topbar">
         <div className="breadcrumb">教学工作区<span>/</span>{route.page === "review" ? "答案复核"
-          : route.page === "batch" ? "批次详情" : route.page === "prepare" ? "作业准备" : "作业批次"}</div>
+          : route.page === "batch" ? "批次详情" : route.page === "prepare" ? "作业准备" : route.page === "practice" ? "针对性补练" : "作业批次"}</div>
         <div className="button-row"><Tag>{session.identityMode === "local-development-token" ? "开发身份" : "当前老师"}</Tag>
           <Button type="text" onClick={disconnect}>退出工作区</Button></div>
       </header>
       <main>
+        <div hidden={route.page !== "practice"}><Suspense fallback={<Loading />}><PracticePage api={session.api} /></Suspense></div>
         {route.page === "batches" && <BatchList api={session.api}
           onPrepare={() => navigate({ page: "prepare" })}
           onOpen={(batchId) => navigate({ page: "batch", batchId })} />}
         {route.page === "prepare" && <Suspense fallback={<Loading />}><PreparationPage api={session.api} store={preparation}
           onBatch={(batchId) => navigate({ page: "batch", batchId })} /></Suspense>}
-        {route.page === "batch" && <BatchWorkspace key={route.batchId} api={session.api} batchId={route.batchId}
+        {route.page === "batch" && <BatchWorkspace key={route.batchId} api={session.api} batchId={route.batchId} initialTab={route.tab}
           onBack={() => navigate({ page: "batches" })}
-          onReview={(itemId) => navigate({ page: "review", batchId: route.batchId, itemId })} />}
+          onReview={(itemId, returnTab) => navigate({ page: "review", batchId: route.batchId, itemId, returnTab })} />}
         {route.page === "review" && <ReviewPage key={route.itemId} api={session.api} itemId={route.itemId}
           drafts={drafts.current} onDirtyChange={markDirty}
-          onBack={() => navigate({ page: "batch", batchId: route.batchId })} />}
+          onBack={() => navigate({ page: "batch", batchId: route.batchId, tab: route.returnTab })} />}
       </main>
     </div>
   </div>;

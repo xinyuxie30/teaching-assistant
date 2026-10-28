@@ -9,7 +9,7 @@ import pytest
 from alembic import command
 from alembic.config import Config
 from conftest import post
-from sqlalchemy import func, select
+from sqlalchemy import func, select, text
 from teaching_assistant.agent.contracts import RunInput
 from teaching_assistant.agent.models import FakeAgentModel
 from teaching_assistant.agent.worker import AgentWorker
@@ -219,7 +219,7 @@ async def test_revision_feedback_and_full_snapshot_are_preflighted(db, client, s
 async def test_migration_preserves_legacy_runs_and_creation_receipts(db, client, scenario):
     path = f"/v1/question-versions/{scenario['question']['id']}/rubric-agent-runs"
     run = await post(client, path, {}, key="legacy-create")
-    old_payload = RunInput().model_dump(mode="json", exclude={"source_draft_id"})
+    old_payload = RunInput().model_dump(mode="json", exclude={"source_draft_id"}, exclude_none=True)
     async with db.sessions() as session:
         receipt = await session.scalar(select(Receipt).where(Receipt.key == "legacy-create"))
         assert receipt.request_hash == digest(old_payload)
@@ -229,6 +229,7 @@ async def test_migration_preserves_legacy_runs_and_creation_receipts(db, client,
         config.attributes["connection"] = connection
         command.downgrade(config, "0005")
         command.upgrade(config, "head")
+        assert connection.scalar(text("SELECT version_num FROM alembic_version")) == "0013"
         command.check(config)
 
     async with db.engine.begin() as connection:

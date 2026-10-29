@@ -1,17 +1,49 @@
+from decimal import Decimal
 from typing import Literal
 from uuid import UUID
 
-from pydantic import Field, field_validator, model_validator
+from pydantic import AwareDatetime, Field, field_validator, model_validator
 
-from teaching_assistant.domain import Contract, ModelMetadata
+from teaching_assistant.domain import Contract
+from teaching_assistant.harness.contracts import FunctionCall, Reply, ToolCall
 from teaching_assistant.schemas import PageQuery
+
+__all__ = ["AgentQuery", "RunInput", "CancelInput", "FunctionCall", "ToolCall", "Reply"]
 
 
 class AgentQuery(PageQuery):
     limit: int = Field(default=20, ge=1, le=100)
     question_version_id: UUID | None = None
+    task_type: (
+        Literal[
+            "rubric",
+            "lesson-plan",
+            "lesson-plan-team",
+            "lesson-practice",
+            "lesson-plan-parallel",
+            "lesson-practice-designer",
+            "lesson-review",
+            "lesson-plan-assisted",
+            "lesson-plan-research",
+            "lesson-plan-background",
+            "class-practice",
+            "homework-grading",
+        ]
+        | None
+    ) = None
     status: (
-        Literal["queued", "running", "waiting_teacher", "completed", "failed", "cancelled"] | None
+        Literal[
+            "queued",
+            "running",
+            "waiting_children",
+            "waiting_input",
+            "waiting_timer",
+            "waiting_teacher",
+            "completed",
+            "failed",
+            "cancelled",
+        ]
+        | None
     ) = None
 
 
@@ -27,6 +59,10 @@ class RunInput(Contract):
     max_tool_calls: int = Field(default=10, ge=1, le=24)
     max_context_characters: int = Field(default=40000, ge=2000, le=200000)
     max_seconds: int = Field(default=300, ge=10, le=3600)
+    max_total_tokens: int | None = Field(default=None, ge=1, le=10000000, strict=True)
+    max_cost_usd: Decimal | None = Field(
+        default=None, gt=0, le=100, max_digits=12, decimal_places=8
+    )
 
     @field_validator("instructions")
     @classmethod
@@ -46,30 +82,29 @@ class CancelInput(Contract):
     reason: str = Field(default="teacher_cancelled", min_length=1, max_length=500)
 
 
-class FunctionCall(Contract):
-    name: str = Field(min_length=1, max_length=128)
-    arguments: str = Field(max_length=100000)
+class ArtifactConfirmInput(Contract):
+    content_hash: str = Field(pattern=r"^[0-9a-f]{64}$")
 
 
-class ToolCall(Contract):
-    id: str = Field(min_length=1, max_length=120)
-    type: Literal["function"] = "function"
-    function: FunctionCall
+class WaitInput(Contract):
+    reason: str = Field(min_length=1, max_length=1000)
+    wake_at: AwareDatetime | None = None
+
+    @field_validator("reason")
+    @classmethod
+    def nonblank_reason(cls, value):
+        if not value.strip():
+            raise ValueError("Wait reason must contain non-whitespace text")
+        return value
 
 
-class Reply(Contract):
-    content: str | None = Field(default=None, max_length=50000)
-    tool_calls: list[ToolCall] = Field(default_factory=list, max_length=4)
-    metadata: ModelMetadata
+class WakeInput(Contract):
+    wait_token: UUID
+    response: str | None = Field(default=None, min_length=1, max_length=4000)
 
-    @model_validator(mode="after")
-    def distinct_calls(self):
-        if len({call.id for call in self.tool_calls}) != len(self.tool_calls):
-            raise ValueError("Duplicate tool call IDs")
-        return self
-
-    def message(self):
-        result = {"role": "assistant", "content": self.content}
-        if self.tool_calls:
-            result["tool_calls"] = [call.model_dump(mode="json") for call in self.tool_calls]
-        return result
+    @field_validator("response")
+    @classmethod
+    def nonblank_response(cls, value):
+        if value is not None and not value.strip():
+            raise ValueError("Wake response must contain non-whitespace text")
+        return value

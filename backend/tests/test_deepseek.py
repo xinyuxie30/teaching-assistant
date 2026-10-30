@@ -153,6 +153,7 @@ async def test_abstention_and_missing_usage_are_not_zero_score_or_free_call():
     "status,code,retryable",
     [
         (401, "provider_auth_error", False),
+        (402, "provider_insufficient_balance", False),
         (429, "provider_rate_limited", True),
         (503, "provider_temporarily_unavailable", True),
         (307, "provider_request_rejected", False),

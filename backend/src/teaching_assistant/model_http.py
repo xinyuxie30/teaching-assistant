@@ -58,6 +58,8 @@ async def post_json(client, *, endpoint, payload, api_key, timeout_seconds):
                 code = (
                     "provider_auth_error"
                     if status in {401, 403}
+                    else "provider_insufficient_balance"
+                    if status == 402
                     else "provider_rate_limited"
                     if status == 429
                     else "provider_temporarily_unavailable"

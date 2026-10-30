@@ -1,6 +1,7 @@
 """TypeSafe System One / Score adapter. One HTTP request, zero hidden retries."""
 
 import json
+from decimal import Decimal
 
 import httpx
 from pydantic import BaseModel, ConfigDict, Field, ValidationError
@@ -39,6 +40,45 @@ class _Response(BaseModel):
     answers: dict[str, _Score]
 
 
+def _validated_probabilities(score: _Score, size: int) -> dict[str, float]:
+    """Validate finite precision wire values before adapting the domain distribution.
+
+    TypeSafe's OpenAPI specifies an expected score and probabilities summing to
+    approximately one. A captured jev-1.14.0 response (2026-10-30) reports both to
+    two decimal places: score 7.53, while the rounded probabilities imply 7.56.
+    Allow only the feasible means of a normalized distribution within +/-0.005
+    of each reported probability, plus +/-0.005 for the reported score. This
+    bounded compatibility policy does not change argmax or turn Score into marks.
+    Source: https://api.typesafe.ai/openapi.json (ScoreAnswer).
+    """
+    half_quantum = Decimal("0.005")
+    weights = [Decimal(str(score.probabilities[str(i)])) for i in range(size)]
+    if any(not weight.is_finite() or not 0 <= weight <= 1 for weight in weights):
+        raise DomainError("invalid_distribution", "Probabilities must be finite and in [0, 1]")
+    lower = [max(Decimal(0), weight - half_quantum) for weight in weights]
+    upper = [min(Decimal(1), weight + half_quantum) for weight in weights]
+    if not sum(lower) <= 1 <= sum(upper):
+        raise DomainError("invalid_distribution", "Probability mass exceeds rounding bounds")
+
+    def extreme_mean(indices):
+        remaining = Decimal(1) - sum(lower)
+        mean = sum(index * weight for index, weight in enumerate(lower))
+        for index in indices:
+            added = min(remaining, upper[index] - lower[index])
+            mean += index * added
+            remaining -= added
+        return mean
+
+    minimum = extreme_mean(range(size))
+    maximum = extreme_mean(reversed(range(size)))
+    reported = Decimal(str(score.score))
+    if reported + half_quantum < minimum or reported - half_quantum > maximum:
+        raise ValueError("Score contradicts the distribution beyond rounding bounds")
+    # Domain probabilities sum to one; a common factor preserves zeros, ties and argmax.
+    total = sum(weights)
+    return {str(index): float(weight / total) for index, weight in enumerate(weights)}
+
+
 class JevEvaluator:
     adapter_version = JEV_ADAPTER_VERSION
 
@@ -47,10 +87,14 @@ class JevEvaluator:
     ):
         if profile.manifest["provider"] != "typesafe":
             raise ValueError("JevEvaluator requires a TypeSafe profile")
+        adapter_version = profile.manifest.get("adapter_version")
+        if adapter_version not in {"typesafe-http-score-v1", "typesafe-http-score-v2"}:
+            raise ModelError("unsupported_adapter_version", retryable=False)
         if not settings.jev_api_key or not settings.jev_api_key.get_secret_value().strip():
             raise ModelError("model_not_configured", retryable=False)
         self.settings, self.profile, self.client = settings, profile, client
         self.requested_model = profile.manifest["model"]
+        self.adapter_version = adapter_version
 
     def prepare(self, request: AssessmentInput) -> dict:
         if request.profile != self.profile.id:
@@ -107,6 +151,8 @@ class JevEvaluator:
                 if not 200 <= status < 300:
                     if status in {401, 403}:
                         code = "provider_auth_error"
+                    elif status == 402:
+                        code = "provider_insufficient_balance"
                     elif status == 429:
                         code = "provider_rate_limited"
                     elif status in {408, 425} or status >= 500:
@@ -188,9 +234,13 @@ class JevEvaluator:
                 or score.score > len(levels) - 1
             ):
                 raise ValueError("Score shape or level mapping changed")
-            probabilities = {
-                level.id: score.probabilities[str(index)] for index, level in enumerate(levels)
-            }
+            # Frozen historical profiles keep their original wire validation semantics.
+            normalized = (
+                score.probabilities
+                if self.adapter_version == "typesafe-http-score-v1"
+                else _validated_probabilities(score, len(levels))
+            )
+            probabilities = {level.id: normalized[str(index)] for index, level in enumerate(levels)}
             output = Evaluation(
                 probabilities=probabilities,
                 provider_score=score.score,
@@ -204,12 +254,12 @@ class JevEvaluator:
                 http_status=status,
             )
             selected = candidate(output, request.criterion)
-            # Provider score may be rounded. It is checked for consistency, never converted to marks.
-            expected_score = sum(
-                index * score.probabilities[str(index)] for index in range(len(levels))
-            )
-            if abs(expected_score - score.score) > 0.02:
-                raise ValueError("Score contradicts the distribution")
+            if self.adapter_version == "typesafe-http-score-v1":
+                expected_score = sum(
+                    index * score.probabilities[str(index)] for index in range(len(levels))
+                )
+                if abs(expected_score - score.score) > 0.02:
+                    raise ValueError("Score contradicts the distribution")
             return output.model_copy(update={"candidate_level_id": selected})
         except ModelError as exc:
             exc.usage, exc.returned_model = usage, returned_model

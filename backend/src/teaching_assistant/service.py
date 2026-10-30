@@ -2,12 +2,12 @@
 
 import asyncio
 import hashlib
-from collections import Counter
+from collections import defaultdict
 from collections.abc import Awaitable, Callable
 from typing import Any
 from uuid import UUID, uuid4
 
-from sqlalchemy import func, select
+from sqlalchemy import func, select, tuple_
 from sqlalchemy.dialects.postgresql import insert
 from sqlalchemy.exc import DBAPIError
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -334,20 +334,38 @@ async def validate_import(
             select(QuestionVersion.id).where(QuestionVersion.assignment_id == assignment_id)
         )
     )
-    existing_rows = []
     for row in data.rows:
         if row.student_id not in members or row.question_version_id not in question_ids:
             raise DomainError(
                 "invalid_import_scope", "Student or question is outside this assignment"
             )
-        existing = await session.scalar(
+
+    def identity(row):
+        return (
+            row.question_version_id,
+            row.student_id,
+            row.external_submission_id,
+            row.source_revision,
+        )
+
+    # The input is bounded to 200 rows. Match the full composite identity in one
+    # query; independent IN predicates would also fetch unintended combinations.
+    stored = {
+        identity(row): row
+        for row in await session.scalars(
             select(AnswerVersion).where(
-                AnswerVersion.question_version_id == row.question_version_id,
-                AnswerVersion.student_id == row.student_id,
-                AnswerVersion.external_submission_id == row.external_submission_id,
-                AnswerVersion.source_revision == row.source_revision,
+                tuple_(
+                    AnswerVersion.question_version_id,
+                    AnswerVersion.student_id,
+                    AnswerVersion.external_submission_id,
+                    AnswerVersion.source_revision,
+                ).in_([identity(row) for row in data.rows])
             )
         )
+    }
+    existing_rows = []
+    for row in data.rows:
+        existing = stored.get(identity(row))
         if existing is not None and (
             existing.answer_text != row.answer_text or existing.submitted_at != row.submitted_at
         ):
@@ -414,20 +432,25 @@ async def refresh_batch(session: AsyncSession, batch_id: UUID) -> None:
     )
     rows = (
         await session.execute(
-            select(GradingItem.status, GradingItem.review_revision)
+            select(
+                GradingItem.status,
+                func.count().label("total"),
+                func.count().filter(GradingItem.review_revision > 0).label("confirmed"),
+            )
             .join(BatchItem, BatchItem.item_id == GradingItem.id)
             .where(BatchItem.batch_id == batch_id)
+            .group_by(GradingItem.status)
         )
     ).all()
-    counts = dict(Counter(status for status, _ in rows))
-    counts["total"] = len(rows)
-    counts["confirmed"] = sum(revision > 0 for _, revision in rows)
+    counts = {row.status: row.total for row in rows}
+    counts["total"] = sum(row.total for row in rows)
+    counts["confirmed"] = sum(row.confirmed for row in rows)
     counts["awaiting_review"] = sum(
-        status == "succeeded" and revision == 0 for status, revision in rows
+        row.total - row.confirmed for row in rows if row.status == "succeeded"
     )
     batch.counts = counts
     terminal = counts.get("succeeded", 0) + counts.get("failed", 0)
-    if terminal == len(rows):
+    if terminal == counts["total"]:
         batch.status = "settled"
         batch.outcome = (
             "all_succeeded"
@@ -437,7 +460,7 @@ async def refresh_batch(session: AsyncSession, batch_id: UUID) -> None:
             else "partial_failure"
         )
     else:
-        batch.status = "queued" if counts.get("pending", 0) == len(rows) else "running"
+        batch.status = "queued" if counts.get("pending", 0) == counts["total"] else "running"
         batch.outcome = None
 
 
@@ -458,25 +481,32 @@ async def create_batch(
             manifest=profile.manifest,
             fingerprint=profile.fingerprint,
         )
-        .on_conflict_do_nothing(index_elements=["id"])
+        # Concurrent first registrations can conflict on either unique index.
+        # Verify identity and content below; never update or alias a frozen profile.
+        .on_conflict_do_nothing()
     )
     stored_profile = await session.get(EvaluationProfile, profile.id)
     if (
-        stored_profile.fingerprint != profile.fingerprint
+        stored_profile is None
+        or stored_profile.fingerprint != profile.fingerprint
         or stored_profile.manifest != profile.manifest
     ):
         raise DomainError(
             "evaluation_profile_conflict", "An existing profile has different content", 409
         )
     rubric = Rubric.model_validate(frozen.body)
-    batch = GradingBatch(teacher_id=teacher, rubric_version_id=frozen.id)
-    session.add(batch)
-    await session.flush()
+    answers = (
+        await session.execute(
+            select(AnswerVersion.id, AnswerVersion.student_id, AnswerVersion.question_version_id)
+            .where(AnswerVersion.id.in_(data.answer_version_ids))
+            .order_by(AnswerVersion.id)
+        )
+    ).all()
+    if len(answers) != len(data.answer_version_ids):
+        raise DomainError("invalid_batch_scope", "Answer version does not match rubric question")
     seen_students: set[UUID] = set()
-    items = []
-    for answer_id in sorted(data.answer_version_ids):
-        answer = await session.get(AnswerVersion, answer_id)
-        if answer is None or answer.question_version_id != frozen.question_version_id:
+    for answer in answers:
+        if answer.question_version_id != frozen.question_version_id:
             raise DomainError(
                 "invalid_batch_scope", "Answer version does not match rubric question"
             )
@@ -485,36 +515,51 @@ async def create_batch(
                 "duplicate_student", "Choose one answer version per student per batch"
             )
         seen_students.add(answer.student_id)
-        # ON CONFLICT also handles duplicate targets across different batch requests and processes.
-        await session.execute(
-            insert(GradingItem)
-            .values(
-                id=uuid4(),
-                teacher_id=teacher,
-                answer_version_id=answer.id,
-                rubric_version_id=frozen.id,
-                evaluation_profile=profile.id,
-                max_calls=len(rubric.criteria) * 6,
-            )
-            .on_conflict_do_nothing(
-                index_elements=["answer_version_id", "rubric_version_id", "evaluation_profile"]
-            )
+    batch = GradingBatch(teacher_id=teacher, rubric_version_id=frozen.id)
+    session.add(batch)
+    await session.flush()
+    # All writers insert and lock shared targets in answer-ID order. A single
+    # bounded insert still uses the database uniqueness rule across processes.
+    await session.execute(
+        insert(GradingItem)
+        .values(
+            [
+                dict(
+                    id=uuid4(),
+                    teacher_id=teacher,
+                    answer_version_id=answer.id,
+                    rubric_version_id=frozen.id,
+                    evaluation_profile=profile.id,
+                    max_calls=len(rubric.criteria) * 6,
+                )
+                for answer in answers
+            ]
         )
-        item = await session.scalar(
-            select(GradingItem)
+        .on_conflict_do_nothing(
+            index_elements=["answer_version_id", "rubric_version_id", "evaluation_profile"]
+        )
+    )
+    items = list(
+        await session.scalars(
+            select(GradingItem.id)
             .where(
-                GradingItem.answer_version_id == answer.id,
+                GradingItem.answer_version_id.in_(data.answer_version_ids),
                 GradingItem.rubric_version_id == frozen.id,
                 GradingItem.evaluation_profile == profile.id,
             )
+            .order_by(GradingItem.answer_version_id)
             .with_for_update()
         )
-        session.add(BatchItem(batch_id=batch.id, item_id=item.id))
-        items.append(str(item.id))
+    )
+    session.add_all(BatchItem(batch_id=batch.id, item_id=item_id) for item_id in items)
     await session.flush()
     await refresh_batch(session, batch.id)
     audit(session, teacher, "grading_batch_created", batch.id)
-    return {"id": str(batch.id), "item_ids": items, "evaluation_profile": profile.id}
+    return {
+        "id": str(batch.id),
+        "item_ids": [str(item_id) for item_id in items],
+        "evaluation_profile": profile.id,
+    }
 
 
 async def batch_view(session: AsyncSession, teacher: UUID, batch_id: UUID) -> dict:
@@ -568,31 +613,76 @@ async def batch_view(session: AsyncSession, teacher: UUID, batch_id: UUID) -> di
 
 
 async def item_view(session: AsyncSession, teacher: UUID, item_id: UUID) -> dict:
-    item = await owned_item(session, teacher, item_id)
-    profile = await session.get(EvaluationProfile, item.evaluation_profile)
-    answer = await session.get(AnswerVersion, item.answer_version_id)
-    frozen = await session.get(RubricVersion, item.rubric_version_id)
-    question = await session.get(QuestionVersion, frozen.question_version_id)
-    student = await session.get(Student, answer.student_id)
-    assignment = await session.get(Assignment, question.assignment_id)
-    assessments = list(
-        await session.scalars(
-            select(Assessment)
-            .where(Assessment.item_id == item_id)
-            .order_by(Assessment.criterion_id)
+    return (await item_views(session, teacher, [item_id]))[item_id]
+
+
+async def item_views(session: AsyncSession, teacher: UUID, item_ids: list[UUID]) -> dict:
+    """Read a bounded set in the caller's snapshot, sharing fixed version records."""
+    if not item_ids:
+        return {}
+    rows = (
+        await session.execute(
+            select(GradingItem, AnswerVersion, Student)
+            .join(AnswerVersion, AnswerVersion.id == GradingItem.answer_version_id)
+            .join(Student, Student.id == AnswerVersion.student_id)
+            .where(GradingItem.id.in_(item_ids), GradingItem.teacher_id == teacher)
         )
+    ).all()
+    if len(rows) != len(set(item_ids)):
+        raise DomainError("not_found", "Grading item not found", 404)
+
+    async def records(model, ids):
+        return {
+            row.id: row
+            for row in await session.scalars(select(model).where(model.id.in_(set(ids))))
+        }
+
+    profiles = await records(EvaluationProfile, (item.evaluation_profile for item, _, _ in rows))
+    rubrics = await records(RubricVersion, (item.rubric_version_id for item, _, _ in rows))
+    questions = await records(
+        QuestionVersion, (rubric.question_version_id for rubric in rubrics.values())
     )
-    steps = {s.id: s for s in await session.scalars(select(Step).where(Step.item_id == item_id))}
-    reviews = list(
-        await session.scalars(
-            select(Review).where(Review.item_id == item_id).order_by(Review.revision)
+    assignments = await records(
+        Assignment, (question.assignment_id for question in questions.values())
+    )
+
+    async def grouped(model, order):
+        result = defaultdict(list)
+        for row in await session.scalars(
+            select(model).where(model.item_id.in_(item_ids)).order_by(model.item_id, *order)
+        ):
+            result[row.item_id].append(row)
+        return result
+
+    assessments = await grouped(Assessment, [Assessment.criterion_id])
+    steps = {
+        row.id: row for row in await session.scalars(select(Step).where(Step.item_id.in_(item_ids)))
+    }
+    reviews = await grouped(Review, [Review.revision])
+    calls = await grouped(ModelCall, [ModelCall.created_at, ModelCall.id])
+    result = {}
+    for item, answer, student in rows:
+        frozen = rubrics[item.rubric_version_id]
+        question = questions[frozen.question_version_id]
+        result[item.id] = _item_view(
+            item,
+            profiles[item.evaluation_profile],
+            answer,
+            frozen,
+            question,
+            student,
+            assignments[question.assignment_id],
+            assessments[item.id],
+            steps,
+            reviews[item.id],
+            calls[item.id],
         )
-    )
-    calls = list(
-        await session.scalars(
-            select(ModelCall).where(ModelCall.item_id == item_id).order_by(ModelCall.created_at)
-        )
-    )
+    return result
+
+
+def _item_view(
+    item, profile, answer, frozen, question, student, assignment, assessments, steps, reviews, calls
+):
     return {
         "id": str(item.id),
         "status": item.status,
@@ -775,29 +865,29 @@ async def create_export(
         .select_from(AssignmentMember)
         .where(AssignmentMember.assignment_id == assignment.id)
     )
-    ids = list(
-        await session.scalars(
-            select(BatchItem.item_id)
+    selected = (
+        await session.execute(
+            select(GradingItem.id, GradingItem.teacher_id, GradingItem.review_revision)
+            .join(BatchItem, BatchItem.item_id == GradingItem.id)
             .where(BatchItem.batch_id == batch.id)
             .order_by(BatchItem.item_id)
         )
-    )
+    ).all()
+    if any(row.teacher_id != teacher for row in selected):
+        raise DomainError("not_found", "Grading item not found", 404)
+    ids = [row.id for row in selected]
+    confirmed = sum(row.review_revision > 0 for row in selected)
+    included = [row.id for row in selected if data.mode == "working" or row.review_revision > 0]
+    views = await item_views(session, teacher, included)
     rows = []
-    confirmed = 0
-    for item_id in ids:
-        view = await item_view(session, teacher, item_id)
-        item = await session.get(GradingItem, item_id)
-        answer = await session.get(AnswerVersion, item.answer_version_id)
-        student = await session.get(Student, answer.student_id)
+    for item_id in included:
+        view = views[item_id]
         is_confirmed = view["review_revision"] > 0
-        confirmed += is_confirmed
-        if data.mode == "confirmed_only" and not is_confirmed:
-            continue
         rows.append(
             {
-                "student_id": str(student.id),
-                "external_student_id": student.external_id,
-                "student_name": student.name,
+                "student_id": view["student"]["id"],
+                "external_student_id": view["student"]["external_id"],
+                "student_name": view["student"]["name"],
                 "review_status": "confirmed" if is_confirmed else "pending",
                 **view,
             }

@@ -13,7 +13,7 @@ from teaching_assistant.grading_context import (
 )
 from teaching_assistant.settings import Settings
 
-JEV_ADAPTER_VERSION = "typesafe-http-score-v1"
+JEV_ADAPTER_VERSION = "typesafe-http-score-v2"
 JEV_PROMPT_VERSION = "teacher-criterion-v1"
 JEV_INSTRUCTIONS = (
     "Assess only the current student's answer against this one teacher-confirmed criterion. "

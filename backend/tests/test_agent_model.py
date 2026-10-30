@@ -67,6 +67,33 @@ async def test_deepseek_tool_protocol_roundtrip_and_receipt():
     assert response.metadata.usage["input_tokens"] == 10
 
 
+async def test_controller_insufficient_balance_is_terminal_and_keeps_receipt():
+    config = settings()
+    policy = manifest(config, "deepseek-rubric-agent-v1")
+    options = RunInput()
+    body = payload(initial_messages(options.instructions), policy, options.model_dump())
+    calls = []
+
+    def provider(request):
+        calls.append(request)
+        return httpx.Response(
+            402,
+            json={"error": {"message": "private insufficient balance diagnostic"}},
+            headers={"x-request-id": "balance-receipt", "Retry-After": "7"},
+        )
+
+    async with httpx.AsyncClient(transport=httpx.MockTransport(provider)) as client:
+        with pytest.raises(ModelError) as raised:
+            await DeepSeekAgentModel(config, client=client).respond(body, policy)
+    failure = raised.value
+    assert failure.code == "provider_insufficient_balance"
+    assert failure.retryable is False
+    assert failure.http_status == 402
+    assert failure.provider_request_id == "balance-receipt"
+    assert len(calls) == 1
+    assert "private" not in str(failure)
+
+
 async def test_provider_tool_index_is_ignored_not_rejected():
     """DeepSeek adds ``index`` to each tool call; it is transport metadata, not contract data."""
     body = tool_response()
